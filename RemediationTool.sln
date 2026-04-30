@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Domain", "src/RemediationTool.Domain/RemediationTool.Domain.csproj", "{D3FB2A41-8754-463C-AB39-165045D1E387}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Application", "src/RemediationTool.Application/RemediationTool.Application.csproj", "{38B9B47D-5FD0-49BE-8325-0D9115E6CAD5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastructure", "src/RemediationTool.Infrastructure/RemediationTool.Infrastructure.csproj", "{64A0D1E6-F1A1-4C59-BA75-14F78F908CF8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API", "src/RemediationTool.API/RemediationTool.API.csproj", "{631174F7-96A0-414B-B72B-EEEAE011190B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D3FB2A41-8754-463C-AB39-165045D1E387}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3FB2A41-8754-463C-AB39-165045D1E387}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3FB2A41-8754-463C-AB39-165045D1E387}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3FB2A41-8754-463C-AB39-165045D1E387}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38B9B47D-5FD0-49BE-8325-0D9115E6CAD5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38B9B47D-5FD0-49BE-8325-0D9115E6CAD5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38B9B47D-5FD0-49BE-8325-0D9115E6CAD5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38B9B47D-5FD0-49BE-8325-0D9115E6CAD5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{64A0D1E6-F1A1-4C59-BA75-14F78F908CF8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{64A0D1E6-F1A1-4C59-BA75-14F78F908CF8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{64A0D1E6-F1A1-4C59-BA75-14F78F908CF8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{64A0D1E6-F1A1-4C59-BA75-14F78F908CF8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{631174F7-96A0-414B-B72B-EEEAE011190B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{631174F7-96A0-414B-B72B-EEEAE011190B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{631174F7-96A0-414B-B72B-EEEAE011190B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{631174F7-96A0-414B-B72B-EEEAE011190B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

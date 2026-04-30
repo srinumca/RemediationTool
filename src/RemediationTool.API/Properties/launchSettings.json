@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "RemediationTool.API": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:58207;http://localhost:58208"
+    }
+  }
+}
