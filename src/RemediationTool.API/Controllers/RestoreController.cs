@@ -1,8 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Services;
-
-namespace RemediationTool.API.Controllers;
 
 [ApiController]
 [Route("api/restore")]
@@ -17,23 +14,21 @@ public class RestoreController : ControllerBase
         _logger = logger;
     }
 
-    // Restore a specific file
-    [HttpPost("{fileName}")]
-    public async Task<IActionResult> Restore(string fileName)
+    [HttpPost("{id}")]
+    public async Task<IActionResult> Restore(Guid id)
     {
         try
         {
-            await _service.RestoreAsync(fileName);
-            return Ok($"Restore triggered for {fileName}");
+            await _service.RestoreAsync(id);
+            return Ok($"Restore triggered for {id}");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error triggering restore for {File}", fileName);
+            _logger.LogError(ex, "Error triggering restore for {FileId}", id);
             return StatusCode(500, "Internal server error");
         }
     }
 
-    // Restore all quarantined files
     [HttpPost("all")]
     public async Task<IActionResult> RestoreAll()
     {

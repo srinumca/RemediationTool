@@ -1,4 +1,5 @@
 using RemediationTool.Application.Models;
+using RemediationTool.Domain;
 
 namespace RemediationTool.Application.Services;
 
@@ -35,23 +36,20 @@ public class ReportService
     // Filter by status
     public List<FileReportDto> GetByStatus(string status)
     {
-        try
+        // 🔥 Convert string → enum
+        if (!Enum.TryParse<FileStatus>(status, true, out var parsedStatus))
         {
-            return _repository.GetAll()
-                .Where(x => x.Status.Equals(status, StringComparison.OrdinalIgnoreCase))
-                .Select(x => new FileReportDto
-                {
-                    FileName = x.FileName,
-                    Status = x.Status,
-                    LastModifiedDate = x.LastModifiedDate,
-                    QuarantinePath = x.QuarantinePath
-                })
-                .ToList();
+            return new List<FileReportDto>();
         }
-        catch
-        {
-            throw;
-        }
+
+        return _repository.GetAll()
+            .Where(x => x.Status == parsedStatus)
+            .Select(x => new FileReportDto
+            {
+                FileName = x.FileName,
+                Status = x.Status,
+            })
+            .ToList();
     }
 
     // Summary
@@ -64,9 +62,9 @@ public class ReportService
             return new
             {
                 Total = data.Count,
-                Loaded = data.Count(x => x.Status == "Loaded"),
-                Quarantined = data.Count(x => x.Status == "Quarantined"),
-                Restored = data.Count(x => x.Status == "Restored")
+                Loaded = data.Count(x => x.Status == FileStatus.Loaded),
+                Quarantined = data.Count(x => x.Status == FileStatus.Quarantined),
+                Restored = data.Count(x => x.Status == FileStatus.Restored)
             };
         }
         catch
@@ -74,4 +72,6 @@ public class ReportService
             throw;
         }
     }
+
+    
 }

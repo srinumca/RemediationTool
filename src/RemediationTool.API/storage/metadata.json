@@ -1,0 +1,74 @@
+[
+  {
+    "Id": "5014977c-bc0c-42da-8545-3609c42a3795",
+    "FileName": "old_obsolete_1.txt",
+    "FilePath": "storage/source/old_obsolete_1.txt",
+    "SourceSystem": "SMB",
+    "FileSize": 120,
+    "FindingType": null,
+    "LastModifiedDate": "2000-01-01T00:00:00",
+    "Status": 5,
+    "QuarantinePath": null,
+    "UpdatedDate": "2026-04-30T07:51:31.3535079Z"
+  },
+  {
+    "Id": "a4a1bb75-6439-43ea-b297-5aa8d78629b4",
+    "FileName": "old_obsolete_2.log",
+    "FilePath": "storage/source/old_obsolete_2.log",
+    "SourceSystem": "SMB",
+    "FileSize": 140,
+    "FindingType": null,
+    "LastModifiedDate": "2005-05-10T00:00:00",
+    "Status": 3,
+    "QuarantinePath": "E:\\Support\\RemediationTool_POC\\src\\RemediationTool.API\\storage\\quarantine\\old_obsolete_2.log",
+    "UpdatedDate": "2026-04-30T07:42:18.4187239Z"
+  },
+  {
+    "Id": "5675981b-f9e2-4a27-941d-189912265a8f",
+    "FileName": "recent_obsolete.csv",
+    "FilePath": "storage/source/recent_obsolete.csv",
+    "SourceSystem": "SMB",
+    "FileSize": 110,
+    "FindingType": null,
+    "LastModifiedDate": "2022-06-15T00:00:00",
+    "Status": 1,
+    "QuarantinePath": null,
+    "UpdatedDate": "2026-04-30T07:42:32.5126771Z"
+  },
+  {
+    "Id": "16890917-33ba-4e82-8747-37d4f35407f5",
+    "FileName": "old_active.doc",
+    "FilePath": "storage/source/old_active.doc",
+    "SourceSystem": "SMB",
+    "FileSize": 130,
+    "FindingType": null,
+    "LastModifiedDate": "2000-03-20T00:00:00",
+    "Status": 3,
+    "QuarantinePath": "E:\\Support\\RemediationTool_POC\\src\\RemediationTool.API\\storage\\quarantine\\old_active.doc",
+    "UpdatedDate": "2026-04-30T07:42:53.5642124Z"
+  },
+  {
+    "Id": "272eb259-7129-4be8-b1e9-cfafd59859e5",
+    "FileName": "recent_active.pdf",
+    "FilePath": "storage/source/recent_active.pdf",
+    "SourceSystem": "SMB",
+    "FileSize": 150,
+    "FindingType": null,
+    "LastModifiedDate": "2023-01-10T00:00:00",
+    "Status": 1,
+    "QuarantinePath": null,
+    "UpdatedDate": "2026-04-30T07:43:02.9971438Z"
+  },
+  {
+    "Id": "5e289f2a-8437-450b-b9e4-e44e0a6a862f",
+    "FileName": "edge_case.json",
+    "FilePath": "storage/source/edge_case.json",
+    "SourceSystem": "SMB",
+    "FileSize": 100,
+    "FindingType": null,
+    "LastModifiedDate": "2016-01-01T00:00:00",
+    "Status": 3,
+    "QuarantinePath": "E:\\Support\\RemediationTool_POC\\src\\RemediationTool.API\\storage\\quarantine\\edge_case.json",
+    "UpdatedDate": "2026-04-30T07:43:18.6545999Z"
+  }
+]

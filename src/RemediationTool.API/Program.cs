@@ -1,69 +1,42 @@
-using System.Text.Json;
-using RemediationTool.Domain;
+using Amazon.S3;
+using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Services;
+using RemediationTool.Infrastructure;
+using RemediationTool.Infrastructure.Repositories;
 
-namespace RemediationTool.Infrastructure.Repositories;
+var builder = WebApplication.CreateBuilder(args);
 
-public class JsonFileFindingRepository : IFileFindingRepository
+// 🔹 Add Controllers
+builder.Services.AddControllers();
+
+// 🔹 Dependency Injection
+builder.Services.AddSingleton<IFileFindingRepository, JsonFileFindingRepository>();
+builder.Services.AddScoped<QuarantineService>();
+builder.Services.AddSingleton<IStorageService, LocalStorageService>();
+builder.Services.AddScoped<DeleteService>();
+builder.Services.AddScoped<ReportService>();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddScoped<IngestionService>();
+//builder.Services.AddSingleton<IStorageService, LocalStorageService>();
+builder.Services.AddSingleton<IFileFindingRepository, JsonFileFindingRepository>();
+builder.Services.AddScoped<RestoreService>();
+builder.Services.AddAWSService<IAmazonS3>();
+builder.Services.AddSingleton<IStorageService, S3StorageService>();
+// 🔹 Swagger (for testing APIs)
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// 🔹 Middleware
+if (app.Environment.IsDevelopment())
 {
-    private readonly string _filePath = Path.Combine("storage", "metadata.json");
-    private List<FileFinding> _cache = new();
-
-    public JsonFileFindingRepository()
-    {
-        Load();
-    }
-
-    private void Load()
-    {
-        if (!File.Exists(_filePath))
-        {
-            _cache = new List<FileFinding>();
-            return;
-        }
-
-        var json = File.ReadAllText(_filePath);
-
-        if (!string.IsNullOrWhiteSpace(json))
-        {
-            _cache = JsonSerializer.Deserialize<List<FileFinding>>(json) ?? new();
-        }
-    }
-
-    private void Save()
-    {
-        Directory.CreateDirectory("storage");
-
-        var json = JsonSerializer.Serialize(_cache, new JsonSerializerOptions
-        {
-            WriteIndented = true
-        });
-
-        File.WriteAllText(_filePath, json);
-    }
-
-    public List<FileFinding> GetAll()
-    {
-        return _cache;
-    }
-
-    public void AddRange(List<FileFinding> records)
-    {
-        _cache.AddRange(records);
-        Save();
-    }
-
-    public void Update(FileFinding record)
-    {
-        var existing = _cache.FirstOrDefault(x => x.FileName == record.FileName);
-
-        if (existing != null)
-        {
-            existing.Status = record.Status;
-            existing.QuarantinePath = record.QuarantinePath;
-            existing.LastModifiedDate = record.LastModifiedDate;
-            existing.FindingType = record.FindingType;
-        }
-
-        Save();
-    }
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
+
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();

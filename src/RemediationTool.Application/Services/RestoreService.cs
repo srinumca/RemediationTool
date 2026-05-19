@@ -1,119 +1,90 @@
 using RemediationTool.Application.Interfaces;
 using Microsoft.Extensions.Logging;
+using RemediationTool.Domain;
 
 namespace RemediationTool.Application.Services;
 
 public class RestoreService
 {
     private readonly IFileFindingRepository _repository;
-    private readonly IStorageService _storage;
     private readonly ILogger<RestoreService> _logger;
 
-    private const int RetryCount = 3;
-
-    public RestoreService(
-        IFileFindingRepository repository,
-        IStorageService storage,
-        ILogger<RestoreService> logger)
+    public RestoreService(IFileFindingRepository repository,
+                          ILogger<RestoreService> logger)
     {
         _repository = repository;
-        _storage = storage;
         _logger = logger;
     }
 
-    public async Task RestoreAsync(string fileName)
+    public async Task RestoreAsync(Guid fileId)
     {
+        var file = _repository.GetAll().FirstOrDefault(x => x.Id == fileId);
+
+        if (file == null)
+        {
+            _logger.LogError("File not found in metadata");
+            return;
+        }
+
+        if (file.Status != FileStatus.Quarantined)
+        {
+            _logger.LogWarning("File is not in Quarantined state");
+            return;
+        }
+
         try
         {
-            var file = _repository.GetAll()
-                .FirstOrDefault(x => x.FileName == fileName);
+            var originalPath = Path.Combine(Directory.GetCurrentDirectory(), file.FilePath);
+            var quarantinePath = file.QuarantinePath;
 
-            if (file == null)
+            if (!File.Exists(quarantinePath))
             {
-                _logger.LogWarning("File not found in repository: {File}", fileName);
+                _logger.LogError("Quarantine file missing: {Path}", quarantinePath); 
                 return;
+            }  
+
+            // Restore file
+            Directory.CreateDirectory(Path.GetDirectoryName(originalPath)!);
+
+            File.Copy(quarantinePath, originalPath, true);
+
+            // FIX: delete from quarantine
+            File.Delete(quarantinePath);
+
+            // Delete stub
+            var stubPath = originalPath + "_Retention_Placeholder";
+            if (File.Exists(stubPath))
+            {
+                File.Delete(stubPath);
             }
 
-            if (!string.Equals(file.Status, "Quarantined", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("File not in quarantine: {File}", fileName);
-                return;
-            }
+            // Update metadata
+            file.Status = FileStatus.Restored;
+            file.QuarantinePath = null;
+            file.UpdatedDate = DateTime.UtcNow;
 
-            var sourceKey = $"quarantine/{file.FileName}";
-            var destKey = $"input/{file.FileName}";
+            _repository.Update(file);
 
-            await ExecuteWithRetryAsync(async () =>
-            {
-                try
-                {
-                    await _storage.MoveAsync(sourceKey, destKey);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Storage move failed for {File}", file.FileName);
-                    throw;
-                }
-
-                file.Status = "Restored";
-                file.QuarantinePath = null;
-
-                try
-                {
-                    _repository.Update(file);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Repository update failed for {File}", file.FileName);
-                    throw;
-                }
-            });
-
-            _logger.LogInformation("Restored {File}", file.FileName);
+            _logger.LogInformation("File restored: {File}", file.FileName);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error restoring file {File}", fileName);
-            throw;
+            file.Status = FileStatus.Failed;
+            _repository.Update(file);
+
+            _logger.LogError(ex, "Restore failed: {File}", file.FileName);
         }
     }
 
     public async Task RestoreAllAsync()
     {
         var files = _repository.GetAll()
-            .Where(x => string.Equals(x.Status, "Quarantined", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Status == FileStatus.Quarantined)
             .ToList();
 
         foreach (var file in files)
         {
-            try
-            {
-                await RestoreAsync(file.FileName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error restoring {File}", file.FileName);
-            }
-        }
-    }
-
-    private async Task ExecuteWithRetryAsync(Func<Task> action)
-    {
-        int attempts = 0;
-
-        while (attempts < RetryCount)
-        {
-            try
-            {
-                await action();
-                return;
-            }
-            catch
-            {
-                attempts++;
-                if (attempts >= RetryCount) throw;
-                await Task.Delay(500);
-            }
+            await RestoreAsync(file.Id);
         }
     }
 }

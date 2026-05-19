@@ -1,86 +1,53 @@
-﻿
-using System;
-using System.IO;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using RemediationTool.Application.Interfaces;
-
-namespace RemediationTool.Infrastructure;
+﻿using RemediationTool.Application.Interfaces;
 
 public class LocalStorageService : IStorageService
 {
-    private readonly string _basePath = "storage";
-    private readonly ILogger<LocalStorageService> _logger;
-
-    public LocalStorageService(ILogger<LocalStorageService> logger)
-    {
-        _logger = logger;
-    }
+    private readonly string _basePath = "storage/files";
 
     public async Task UploadAsync(string key, Stream data)
     {
-        try
-        {
-            var path = Path.Combine(_basePath, key);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var fullPath = Path.Combine(_basePath, key);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
 
-            using var fs = new FileStream(path, FileMode.Create);
-            await data.CopyToAsync(fs);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Local upload failed for key {Key}", key);
-            throw;
-        }
+        using var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
+        await data.CopyToAsync(fileStream);
     }
 
-    public Task<Stream> DownloadAsync(string key)
+    public async Task<Stream> DownloadAsync(string key)
     {
-        try
-        {
-            var path = Path.Combine(_basePath, key);
-            return Task.FromResult<Stream>(File.OpenRead(path));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Local download failed for key {Key}", key);
-            throw;
-        }
+        var fullPath = Path.Combine(_basePath, key);
+
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException(fullPath);
+
+        var memory = new MemoryStream();
+        using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+        await fileStream.CopyToAsync(memory);
+
+        memory.Position = 0;
+        return memory;
     }
 
-    public Task MoveAsync(string sourceKey, string destinationKey)
+    public async Task MoveAsync(string sourceKey, string destinationKey)
     {
-        try
-        {
-            var src = Path.Combine(_basePath, sourceKey);
-            var dest = Path.Combine(_basePath, destinationKey);
+        var sourcePath = Path.Combine(_basePath, sourceKey);
+        var destPath = Path.Combine(_basePath, destinationKey);
 
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.Move(src, dest, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
 
-            return Task.CompletedTask;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Local move failed from {Source} to {Dest}", sourceKey, destinationKey);
-            throw;
-        }
+        File.Copy(sourcePath, destPath, true);
+        File.Delete(sourcePath); // ✅ only delete source
+
+        await Task.CompletedTask;
     }
 
-    public Task DeleteAsync(string key)
+    public async Task DeleteAsync(string key)
     {
-        try
-        {
-            var path = Path.Combine(_basePath, key);
-            if (File.Exists(path))
-                File.Delete(path);
+        var fullPath = Path.Combine(_basePath, key);
 
-            return Task.CompletedTask;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Local delete failed for key {Key}", key);
-            throw;
-        }
+        if (File.Exists(fullPath))
+            File.Delete(fullPath);
+
+        await Task.CompletedTask;
     }
 }

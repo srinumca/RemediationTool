@@ -1,44 +1,39 @@
-
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using RemediationTool.Infrastructure;
-using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Services;
 
-namespace RemediationTool.API.Controllers
+[ApiController]
+[Route("api/ingestion")]
+public class IngestionController : ControllerBase
 {
-    [ApiController]
-    [Route("api/ingestion")]
-    public class IngestionController : ControllerBase
+    private readonly IngestionService _service;
+    private readonly ILogger<IngestionController> _logger;
+
+    public IngestionController(IngestionService service, ILogger<IngestionController> logger)
     {
-        private readonly IStorageService _storage;
-        private readonly ILogger<IngestionController> _logger;
+        _service = service;
+        _logger = logger;
+    }
 
-        public IngestionController(IStorageService storage, ILogger<IngestionController> logger)
+    [HttpPost("upload")]
+    public async Task<IActionResult> Upload(IFormFile file)
+    {
+        try
         {
-            _storage = storage;
-            _logger = logger;
+            if (file == null || file.Length == 0)
+                return BadRequest("File missing");
+
+            var count = await _service.ProcessAsync(file);
+
+            return Ok(new
+            {
+                message = "Processed successfully",
+                records = count
+            });
         }
-
-        [HttpPost("upload")]
-        public async Task<IActionResult> Upload(IFormFile file)
+        catch (Exception ex)
         {
-            try
-            {
-                if (file == null || file.Length == 0)
-                    return BadRequest("File missing");
-
-                var key = $"input/{file.FileName}";
-
-                await _storage.UploadAsync(key, file.OpenReadStream());
-
-                return Ok(new { message = "Uploaded", key });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error uploading file");
-                return StatusCode(500, "Internal server error");
-            }
+            _logger.LogError(ex, "Error uploading file");
+            return StatusCode(500, "Internal server error");
         }
     }
 }

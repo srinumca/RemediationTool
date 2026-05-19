@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using RemediationTool.Domain;
 
@@ -10,9 +11,15 @@ public class JsonFileFindingRepository : IFileFindingRepository
     private readonly object _lock = new();
     private List<FileFinding> _cache = new();
 
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() } // 🔥 IMPORTANT
+    };
+
     public JsonFileFindingRepository(IOptions<JsonFileRepositoryOptions> options)
     {
-        _filePath = options?.Value?.FilePath ?? Path.Combine("storage", "metadata.json");
+        _filePath = Path.Combine(Directory.GetCurrentDirectory(), "storage", "metadata.json");
         Load();
     }
 
@@ -28,9 +35,20 @@ public class JsonFileFindingRepository : IFileFindingRepository
 
             var json = File.ReadAllText(_filePath);
 
-            if (!string.IsNullOrWhiteSpace(json))
+            if (string.IsNullOrWhiteSpace(json))
             {
-                _cache = JsonSerializer.Deserialize<List<FileFinding>>(json) ?? new();
+                _cache = new List<FileFinding>();
+            }
+            else
+            {
+                try
+                {
+                    _cache = JsonSerializer.Deserialize<List<FileFinding>>(json) ?? new();
+                }
+                catch
+                {
+                    _cache = new List<FileFinding>(); // fallback
+                }
             }
         }
     }
@@ -39,7 +57,10 @@ public class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_filePath) ?? "storage");
+            var dir = Path.GetDirectoryName(_filePath);
+
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
 
             var json = JsonSerializer.Serialize(_cache, new JsonSerializerOptions
             {
@@ -66,10 +87,11 @@ public class JsonFileFindingRepository : IFileFindingRepository
         {
             foreach (var f in records)
             {
-                if (string.IsNullOrWhiteSpace(f.Id))
-                    f.Id = Guid.NewGuid().ToString();
+                if (f.Id == Guid.Empty)
+                    f.Id = Guid.NewGuid();
 
                 var existing = _cache.FirstOrDefault(x => x.Id == f.Id);
+
                 if (existing == null)
                 {
                     _cache.Add(Clone(f));
@@ -77,9 +99,9 @@ public class JsonFileFindingRepository : IFileFindingRepository
                 else
                 {
                     existing.FileName = f.FileName;
-                    //existing.FilePath = f.FilePath;
-                    //existing.SourceSystem = f.SourceSystem;
-                    //existing.FileSize = f.FileSize;
+                    existing.FilePath = f.FilePath;
+                    existing.SourceSystem = f.SourceSystem;
+                    existing.FileSize = f.FileSize;
                     existing.LastModifiedDate = f.LastModifiedDate;
                     existing.Status = f.Status;
                     existing.QuarantinePath = f.QuarantinePath;
@@ -97,8 +119,6 @@ public class JsonFileFindingRepository : IFileFindingRepository
         lock (_lock)
         {
             var existing = _cache.FirstOrDefault(x => x.Id == record.Id);
-            if (existing == null && !string.IsNullOrWhiteSpace(record.FileName))
-                existing = _cache.FirstOrDefault(x => x.FileName == record.FileName);
 
             if (existing != null)
             {
@@ -109,6 +129,7 @@ public class JsonFileFindingRepository : IFileFindingRepository
                 existing.LastModifiedDate = record.LastModifiedDate;
                 existing.Status = record.Status;
                 existing.QuarantinePath = record.QuarantinePath;
+                existing.UpdatedDate = DateTime.UtcNow;
 
                 Save();
             }
@@ -117,13 +138,14 @@ public class JsonFileFindingRepository : IFileFindingRepository
 
     private static FileFinding Clone(FileFinding f) => new()
     {
-        //Id = f.Id,
-        //FileName = f.FileName,
-        //FilePath = f.FilePath,
-        //SourceSystem = f.SourceSystem,
-        //FileSize = f.FileSize,
+        Id = f.Id,
+        FileName = f.FileName,
+        FilePath = f.FilePath,
+        SourceSystem = f.SourceSystem,
+        FileSize = f.FileSize,
         LastModifiedDate = f.LastModifiedDate,
         Status = f.Status,
-        QuarantinePath = f.QuarantinePath
+        QuarantinePath = f.QuarantinePath,
+        UpdatedDate = f.UpdatedDate
     };
 }
