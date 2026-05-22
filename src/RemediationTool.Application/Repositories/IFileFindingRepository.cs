@@ -1,4 +1,6 @@
-using RemediationTool.Domain;
+using RemediationTool.Domain.Entities;
+
+namespace RemediationTool.Application.Repositories;
 
 public interface IFileFindingRepository
 {

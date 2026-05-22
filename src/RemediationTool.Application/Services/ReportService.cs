@@ -1,5 +1,7 @@
 using RemediationTool.Application.Models;
+using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
+using RemediationTool.Domain.Entities;
 
 namespace RemediationTool.Application.Services;
 

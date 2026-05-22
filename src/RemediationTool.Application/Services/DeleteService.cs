@@ -1,5 +1,7 @@
 ﻿using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
+using RemediationTool.Domain.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace RemediationTool.Application.Services;

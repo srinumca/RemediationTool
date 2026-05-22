@@ -1,7 +1,8 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
-using RemediationTool.Domain;
+using RemediationTool.Application.Repositories;
+using RemediationTool.Domain.Entities;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
@@ -102,9 +103,17 @@ public class JsonFileFindingRepository : IFileFindingRepository
                     existing.FilePath = f.FilePath;
                     existing.SourceSystem = f.SourceSystem;
                     existing.FileSize = f.FileSize;
+                    existing.FindingType = f.FindingType;
                     existing.LastModifiedDate = f.LastModifiedDate;
                     existing.Status = f.Status;
                     existing.QuarantinePath = f.QuarantinePath;
+                    existing.IngestionId = f.IngestionId;
+                    existing.InboundFileName = f.InboundFileName;
+                    existing.UploadedBy = f.UploadedBy;
+                    existing.LoadDate = f.LoadDate;
+                    existing.UpdatedDate = f.UpdatedDate;
+                    existing.IsValid = f.IsValid;
+                    existing.ErrorReason = f.ErrorReason;
                 }
             }
 
@@ -126,10 +135,17 @@ public class JsonFileFindingRepository : IFileFindingRepository
                 existing.FilePath = record.FilePath;
                 existing.SourceSystem = record.SourceSystem;
                 existing.FileSize = record.FileSize;
+                existing.FindingType = record.FindingType;
                 existing.LastModifiedDate = record.LastModifiedDate;
                 existing.Status = record.Status;
                 existing.QuarantinePath = record.QuarantinePath;
+                existing.IngestionId = record.IngestionId;
+                existing.InboundFileName = record.InboundFileName;
+                existing.UploadedBy = record.UploadedBy;
+                existing.LoadDate = record.LoadDate;
                 existing.UpdatedDate = DateTime.UtcNow;
+                existing.IsValid = record.IsValid;
+                existing.ErrorReason = record.ErrorReason;
 
                 Save();
             }
@@ -143,9 +159,16 @@ public class JsonFileFindingRepository : IFileFindingRepository
         FilePath = f.FilePath,
         SourceSystem = f.SourceSystem,
         FileSize = f.FileSize,
+        FindingType = f.FindingType,
         LastModifiedDate = f.LastModifiedDate,
         Status = f.Status,
         QuarantinePath = f.QuarantinePath,
-        UpdatedDate = f.UpdatedDate
+        IngestionId = f.IngestionId,
+        InboundFileName = f.InboundFileName,
+        UploadedBy = f.UploadedBy,
+        LoadDate = f.LoadDate,
+        UpdatedDate = f.UpdatedDate,
+        IsValid = f.IsValid,
+        ErrorReason = f.ErrorReason
     };
 }
