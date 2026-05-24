@@ -1,0 +1,290 @@
+[
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "FindingFileName",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_File_Name is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.264426Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "FindingFileFormat",
+    "RejectedValue": "",
+    "ErrorReason": "Finding File Format is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644719Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "CurrentFileLocation",
+    "RejectedValue": "",
+    "ErrorReason": "Current_File_Location is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644721Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644723Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644725Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644729Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.264473Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 18,
+    "FieldName": "OriginatingVendorTool",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Vendor_Tool is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644732Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "FindingFileName",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_File_Name is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644734Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "FindingFileFormat",
+    "RejectedValue": "",
+    "ErrorReason": "Finding File Format is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644735Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "CurrentFileLocation",
+    "RejectedValue": "",
+    "ErrorReason": "Current_File_Location is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644737Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644738Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644739Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644741Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644742Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 19,
+    "FieldName": "OriginatingVendorTool",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Vendor_Tool is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644744Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "FindingFileName",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_File_Name is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644745Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "FindingFileFormat",
+    "RejectedValue": "",
+    "ErrorReason": "Finding File Format is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644746Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "CurrentFileLocation",
+    "RejectedValue": "",
+    "ErrorReason": "Current_File_Location is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644747Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644749Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644798Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.26448Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644801Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 20,
+    "FieldName": "OriginatingVendorTool",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Vendor_Tool is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644802Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "FindingFileName",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_File_Name is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644804Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "FindingFileFormat",
+    "RejectedValue": "",
+    "ErrorReason": "Finding File Format is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644805Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "CurrentFileLocation",
+    "RejectedValue": "",
+    "ErrorReason": "Current_File_Location is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644807Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644808Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "FindingType",
+    "RejectedValue": "",
+    "ErrorReason": "Finding_Type is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644809Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644811Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "OriginatingDataSystem",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Data_System is invalid",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644812Z"
+  },
+  {
+    "JobId": "ING-20260524-095605-B4C49D16",
+    "InboundFileName": "Sample SMB Obsolete Files.csv",
+    "RowNumber": 21,
+    "FieldName": "OriginatingVendorTool",
+    "RejectedValue": "",
+    "ErrorReason": "Originating_Vendor_Tool is required",
+    "CreatedAtUtc": "2026-05-24T10:02:08.2644814Z"
+  }
+]

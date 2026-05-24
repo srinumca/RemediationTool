@@ -1,39 +1,39 @@
 using Microsoft.AspNetCore.Mvc;
+using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
+using RemediationTool.Domain.Enum;
+
+namespace RemediationTool.API.Controllers;
 
 [ApiController]
-[Route("api/ingestion")]
+[Route("api/[controller]")]
 public class IngestionController : ControllerBase
 {
-    private readonly IngestionService _service;
+    private readonly IngestionService _ingestionService;
     private readonly ILogger<IngestionController> _logger;
 
-    public IngestionController(IngestionService service, ILogger<IngestionController> logger)
+
+    public IngestionController(
+        IngestionService ingestionService,
+        ILogger<IngestionController> logger)
     {
-        _service = service;
+        _ingestionService = ingestionService;
         _logger = logger;
     }
 
     [HttpPost("upload")]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(IFormFile file)
     {
-        try
-        {
-            if (file == null || file.Length == 0)
-                return BadRequest("File missing");
+        var response = await _ingestionService.ProcessAsync(file);
 
-            var count = await _service.ProcessAsync(file);
-
-            return Ok(new
-            {
-                message = "Processed successfully",
-                records = count
-            });
-        }
-        catch (Exception ex)
+        if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
         {
-            _logger.LogError(ex, "Error uploading file");
-            return StatusCode(500, "Internal server error");
+            return BadRequest(response);
         }
+
+        return Ok(response);
     }
 }

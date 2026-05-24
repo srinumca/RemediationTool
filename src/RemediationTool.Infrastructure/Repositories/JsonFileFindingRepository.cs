@@ -1,6 +1,5 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 
@@ -10,65 +9,22 @@ public class JsonFileFindingRepository : IFileFindingRepository
 {
     private readonly string _filePath;
     private readonly object _lock = new();
-    private List<FileFinding> _cache = new();
 
-    private readonly JsonSerializerOptions _jsonOptions = new()
+    public JsonFileFindingRepository(IConfiguration configuration)
     {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() } // 🔥 IMPORTANT
-    };
+        var rootPath = configuration["Persistence:JsonRootPath"] ?? "storage";
+        _filePath = Path.Combine(rootPath, "metadata.json");
 
-    public JsonFileFindingRepository(IOptions<JsonFileRepositoryOptions> options)
-    {
-        _filePath = Path.Combine(Directory.GetCurrentDirectory(), "storage", "metadata.json");
-        Load();
-    }
+        var directory = Path.GetDirectoryName(_filePath);
 
-    private void Load()
-    {
-        lock (_lock)
+        if (!string.IsNullOrWhiteSpace(directory))
         {
-            if (!File.Exists(_filePath))
-            {
-                _cache = new List<FileFinding>();
-                return;
-            }
-
-            var json = File.ReadAllText(_filePath);
-
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                _cache = new List<FileFinding>();
-            }
-            else
-            {
-                try
-                {
-                    _cache = JsonSerializer.Deserialize<List<FileFinding>>(json) ?? new();
-                }
-                catch
-                {
-                    _cache = new List<FileFinding>(); // fallback
-                }
-            }
+            Directory.CreateDirectory(directory);
         }
-    }
 
-    private void Save()
-    {
-        lock (_lock)
+        if (!File.Exists(_filePath))
         {
-            var dir = Path.GetDirectoryName(_filePath);
-
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
-
-            var json = JsonSerializer.Serialize(_cache, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
-
-            File.WriteAllText(_filePath, json);
+            File.WriteAllText(_filePath, "[]");
         }
     }
 
@@ -76,99 +32,79 @@ public class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return _cache.Select(f => Clone(f)).ToList();
+            var json = File.ReadAllText(_filePath);
+
+            return JsonSerializer.Deserialize<List<FileFinding>>(json)
+                   ?? new List<FileFinding>();
         }
     }
 
-    public void AddRange(List<FileFinding> records)
+    public FileFinding? GetById(Guid id)
     {
-        if (records == null || records.Count == 0) return;
+        return GetAll().FirstOrDefault(x => x.Id == id);
+    }
+
+    public void Add(FileFinding finding)
+    {
+        lock (_lock)
+        {
+            var findings = ReadAllInternal();
+            findings.Add(finding);
+            WriteAllInternal(findings);
+        }
+    }
+
+    public void AddRange(List<FileFinding> findingsToAdd)
+    {
+        if (findingsToAdd == null || findingsToAdd.Count == 0)
+            return;
 
         lock (_lock)
         {
-            foreach (var f in records)
-            {
-                if (f.Id == Guid.Empty)
-                    f.Id = Guid.NewGuid();
-
-                var existing = _cache.FirstOrDefault(x => x.Id == f.Id);
-
-                if (existing == null)
-                {
-                    _cache.Add(Clone(f));
-                }
-                else
-                {
-                    existing.FileName = f.FileName;
-                    existing.FilePath = f.FilePath;
-                    existing.SourceSystem = f.SourceSystem;
-                    existing.FileSize = f.FileSize;
-                    existing.FindingType = f.FindingType;
-                    existing.LastModifiedDate = f.LastModifiedDate;
-                    existing.Status = f.Status;
-                    existing.QuarantinePath = f.QuarantinePath;
-                    existing.IngestionId = f.IngestionId;
-                    existing.InboundFileName = f.InboundFileName;
-                    existing.UploadedBy = f.UploadedBy;
-                    existing.LoadDate = f.LoadDate;
-                    existing.UpdatedDate = f.UpdatedDate;
-                    existing.IsValid = f.IsValid;
-                    existing.ErrorReason = f.ErrorReason;
-                }
-            }
-
-            Save();
+            var findings = ReadAllInternal();
+            findings.AddRange(findingsToAdd);
+            WriteAllInternal(findings);
         }
     }
 
-    public void Update(FileFinding record)
+    public void Update(FileFinding finding)
     {
-        if (record == null) return;
-
         lock (_lock)
         {
-            var existing = _cache.FirstOrDefault(x => x.Id == record.Id);
+            var findings = ReadAllInternal();
 
-            if (existing != null)
+            var index = findings.FindIndex(x => x.Id == finding.Id);
+
+            if (index >= 0)
             {
-                existing.FileName = record.FileName;
-                existing.FilePath = record.FilePath;
-                existing.SourceSystem = record.SourceSystem;
-                existing.FileSize = record.FileSize;
-                existing.FindingType = record.FindingType;
-                existing.LastModifiedDate = record.LastModifiedDate;
-                existing.Status = record.Status;
-                existing.QuarantinePath = record.QuarantinePath;
-                existing.IngestionId = record.IngestionId;
-                existing.InboundFileName = record.InboundFileName;
-                existing.UploadedBy = record.UploadedBy;
-                existing.LoadDate = record.LoadDate;
-                existing.UpdatedDate = DateTime.UtcNow;
-                existing.IsValid = record.IsValid;
-                existing.ErrorReason = record.ErrorReason;
-
-                Save();
+                findings[index] = finding;
             }
+            else
+            {
+                findings.Add(finding);
+            }
+
+            WriteAllInternal(findings);
         }
     }
 
-    private static FileFinding Clone(FileFinding f) => new()
+    private List<FileFinding> ReadAllInternal()
     {
-        Id = f.Id,
-        FileName = f.FileName,
-        FilePath = f.FilePath,
-        SourceSystem = f.SourceSystem,
-        FileSize = f.FileSize,
-        FindingType = f.FindingType,
-        LastModifiedDate = f.LastModifiedDate,
-        Status = f.Status,
-        QuarantinePath = f.QuarantinePath,
-        IngestionId = f.IngestionId,
-        InboundFileName = f.InboundFileName,
-        UploadedBy = f.UploadedBy,
-        LoadDate = f.LoadDate,
-        UpdatedDate = f.UpdatedDate,
-        IsValid = f.IsValid,
-        ErrorReason = f.ErrorReason
-    };
+        var json = File.ReadAllText(_filePath);
+
+        return JsonSerializer.Deserialize<List<FileFinding>>(json)
+               ?? new List<FileFinding>();
+    }
+
+    private void WriteAllInternal(List<FileFinding> findings)
+    {
+        var json = JsonSerializer.Serialize(
+            findings,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        File.WriteAllText(_filePath, json);
+    }
 }

@@ -1,107 +1,154 @@
-﻿using System;
-using System.IO;
-using System.Threading.Tasks;
-using Amazon.S3;
+﻿using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Interfaces;
 
-namespace RemediationTool.Infrastructure
+namespace RemediationTool.Infrastructure;
+
+public class S3StorageService : IStorageService
 {
-    public class S3StorageService : IStorageService
+    private readonly IAmazonS3 _s3Client;
+    private readonly IConfiguration _configuration;
+    private readonly string _bucketName;
+
+    public S3StorageService(
+        IAmazonS3 s3Client,
+        IConfiguration configuration)
     {
-        private readonly IAmazonS3 _s3;
-        private readonly string _bucket;
-        private readonly ILogger<S3StorageService> _logger;
+        _s3Client = s3Client;
+        _configuration = configuration;
+        _bucketName = configuration["AWS:BucketName"]
+            ?? throw new InvalidOperationException("AWS:BucketName configuration is missing.");
+    }
 
-        public S3StorageService(IAmazonS3 s3, IConfiguration config, ILogger<S3StorageService> logger)
+    public async Task UploadAsync(string key, Stream stream)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        var request = new PutObjectRequest
         {
-            _s3 = s3 ?? throw new ArgumentNullException(nameof(s3));
-            _bucket = config?["AWS:BucketName"] ?? throw new ArgumentException("AWS:BucketName is not configured.", nameof(config));
-            _logger = logger;
+            BucketName = _bucketName,
+            Key = NormalizeKey(key),
+            InputStream = stream
+        };
+
+        ApplyServerSideEncryption(request);
+
+        await _s3Client.PutObjectAsync(request);
+    }
+
+    public async Task<Stream> DownloadAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        var response = await _s3Client.GetObjectAsync(new GetObjectRequest
+        {
+            BucketName = _bucketName,
+            Key = NormalizeKey(key)
+        });
+
+        var memoryStream = new MemoryStream();
+        await response.ResponseStream.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+
+        return memoryStream;
+    }
+
+    public async Task MoveAsync(string sourceKey, string destinationKey)
+    {
+        if (string.IsNullOrWhiteSpace(sourceKey))
+            throw new ArgumentException("Source key is required.", nameof(sourceKey));
+
+        if (string.IsNullOrWhiteSpace(destinationKey))
+            throw new ArgumentException("Destination key is required.", nameof(destinationKey));
+
+        var copyRequest = new CopyObjectRequest
+        {
+            SourceBucket = _bucketName,
+            SourceKey = NormalizeKey(sourceKey),
+            DestinationBucket = _bucketName,
+            DestinationKey = NormalizeKey(destinationKey)
+        };
+
+        ApplyServerSideEncryption(copyRequest);
+
+        await _s3Client.CopyObjectAsync(copyRequest);
+
+        await DeleteAsync(sourceKey);
+    }
+
+    public async Task DeleteAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        await _s3Client.DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = _bucketName,
+            Key = NormalizeKey(key)
+        });
+    }
+
+    private void ApplyServerSideEncryption(PutObjectRequest request)
+    {
+        var useEncryption = bool.TryParse(
+            _configuration["AWS:UseServerSideEncryption"],
+            out var parsedValue) && parsedValue;
+
+        if (!useEncryption)
+            return;
+
+        var method = _configuration["AWS:ServerSideEncryptionMethod"] ?? "AES256";
+
+        if (method.Equals("AWSKMS", StringComparison.OrdinalIgnoreCase))
+        {
+            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS;
+
+            var kmsKeyId = _configuration["AWS:KmsKeyId"];
+
+            if (!string.IsNullOrWhiteSpace(kmsKeyId))
+            {
+                request.ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId;
+            }
+
+            return;
         }
 
-        public async Task UploadAsync(string key, Stream data)
+        request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AES256;
+    }
+
+    private void ApplyServerSideEncryption(CopyObjectRequest request)
+    {
+        var useEncryption = bool.TryParse(
+            _configuration["AWS:UseServerSideEncryption"],
+            out var parsedValue) && parsedValue;
+
+        if (!useEncryption)
+            return;
+
+        var method = _configuration["AWS:ServerSideEncryptionMethod"] ?? "AES256";
+
+        if (method.Equals("AWSKMS", StringComparison.OrdinalIgnoreCase))
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key is required.", nameof(key));
-                if (data == null) throw new ArgumentNullException(nameof(data));
+            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS;
 
-                var request = new PutObjectRequest
-                {
-                    BucketName = _bucket,
-                    Key = key,
-                    InputStream = data
-                };
+            var kmsKeyId = _configuration["AWS:KmsKeyId"];
 
-                await _s3.PutObjectAsync(request).ConfigureAwait(false);
-            }
-            catch (Exception ex)
+            if (!string.IsNullOrWhiteSpace(kmsKeyId))
             {
-                _logger.LogError(ex, "S3 upload failed for key {Key}", key);
-                throw;
+                request.ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId;
             }
+
+            return;
         }
 
-        public async Task<Stream> DownloadAsync(string key)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key is required.", nameof(key));
+        request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AES256;
+    }
 
-                using var res = await _s3.GetObjectAsync(_bucket, key).ConfigureAwait(false);
-                var ms = new MemoryStream();
-                await res.ResponseStream.CopyToAsync(ms).ConfigureAwait(false);
-                ms.Position = 0;
-                return ms;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "S3 download failed for key {Key}", key);
-                throw;
-            }
-        }
-
-        public async Task MoveAsync(string sourceKey, string destinationKey)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(sourceKey)) throw new ArgumentException("Source key is required.", nameof(sourceKey));
-                if (string.IsNullOrWhiteSpace(destinationKey)) throw new ArgumentException("Destination key is required.", nameof(destinationKey));
-
-                var copyRequest = new CopyObjectRequest
-                {
-                    SourceBucket = _bucket,
-                    SourceKey = sourceKey,
-                    DestinationBucket = _bucket,
-                    DestinationKey = destinationKey
-                };
-
-                await _s3.CopyObjectAsync(copyRequest).ConfigureAwait(false);
-                await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = sourceKey }).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "S3 move failed from {Source} to {Dest}", sourceKey, destinationKey);
-                throw;
-            }
-        }
-
-        public async Task DeleteAsync(string key)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key is required.", nameof(key));
-
-                await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "S3 delete failed for key {Key}", key);
-                throw;
-            }
-        }
+    private static string NormalizeKey(string key)
+    {
+        return key.Replace("\\", "/");
     }
 }

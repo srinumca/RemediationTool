@@ -1,53 +1,102 @@
-﻿using RemediationTool.Application.Interfaces;
+﻿using Microsoft.Extensions.Configuration;
+using RemediationTool.Application.Interfaces;
+
+namespace RemediationTool.Infrastructure;
 
 public class LocalStorageService : IStorageService
 {
-    private readonly string _basePath = "storage/files";
+    private readonly string _rootPath;
 
-    public async Task UploadAsync(string key, Stream data)
+    public LocalStorageService(IConfiguration configuration)
     {
-        var fullPath = Path.Combine(_basePath, key);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        _rootPath = configuration["Storage:LocalRootPath"] ?? "storage";
+    }
 
-        using var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
-        await data.CopyToAsync(fileStream);
+    public async Task UploadAsync(string key, Stream stream)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        var fullPath = GetFullPath(key);
+        var directory = Path.GetDirectoryName(fullPath);
+
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await using var fileStream = File.Create(fullPath);
+        await stream.CopyToAsync(fileStream);
     }
 
     public async Task<Stream> DownloadAsync(string key)
     {
-        var fullPath = Path.Combine(_basePath, key);
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        var fullPath = GetFullPath(key);
 
         if (!File.Exists(fullPath))
-            throw new FileNotFoundException(fullPath);
+            throw new FileNotFoundException($"File not found in local storage: {key}");
 
-        var memory = new MemoryStream();
-        using var fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-        await fileStream.CopyToAsync(memory);
+        var memoryStream = new MemoryStream();
 
-        memory.Position = 0;
-        return memory;
+        await using var fileStream = File.OpenRead(fullPath);
+        await fileStream.CopyToAsync(memoryStream);
+
+        memoryStream.Position = 0;
+        return memoryStream;
     }
 
     public async Task MoveAsync(string sourceKey, string destinationKey)
     {
-        var sourcePath = Path.Combine(_basePath, sourceKey);
-        var destPath = Path.Combine(_basePath, destinationKey);
+        if (string.IsNullOrWhiteSpace(sourceKey))
+            throw new ArgumentException("Source key is required.", nameof(sourceKey));
 
-        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+        if (string.IsNullOrWhiteSpace(destinationKey))
+            throw new ArgumentException("Destination key is required.", nameof(destinationKey));
 
-        File.Copy(sourcePath, destPath, true);
-        File.Delete(sourcePath); // ✅ only delete source
+        var sourcePath = GetFullPath(sourceKey);
+        var destinationPath = GetFullPath(destinationKey);
 
-        await Task.CompletedTask;
+        if (!File.Exists(sourcePath))
+            throw new FileNotFoundException($"Source file not found: {sourceKey}");
+
+        var destinationDirectory = Path.GetDirectoryName(destinationPath);
+
+        if (!string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            Directory.CreateDirectory(destinationDirectory);
+        }
+
+        await using var sourceStream = File.OpenRead(sourcePath);
+        await using var destinationStream = File.Create(destinationPath);
+        await sourceStream.CopyToAsync(destinationStream);
+
+        File.Delete(sourcePath);
     }
 
-    public async Task DeleteAsync(string key)
+    public Task DeleteAsync(string key)
     {
-        var fullPath = Path.Combine(_basePath, key);
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Storage key is required.", nameof(key));
+
+        var fullPath = GetFullPath(key);
 
         if (File.Exists(fullPath))
+        {
             File.Delete(fullPath);
+        }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
+    }
+
+    private string GetFullPath(string key)
+    {
+        var normalizedKey = key
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+
+        return Path.Combine(_rootPath, normalizedKey);
     }
 }

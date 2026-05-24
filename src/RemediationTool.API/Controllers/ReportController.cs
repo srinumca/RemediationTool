@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using RemediationTool.Application.Repositories;
 using RemediationTool.Application.Services;
+
 
 namespace RemediationTool.API.Controllers;
 
@@ -10,11 +12,15 @@ public class ReportController : ControllerBase
 {
     private readonly ReportService _service;
     private readonly ILogger<ReportController> _logger;
+    private readonly ReportService _reportService;
+    private readonly IRejectedRowRepository _rejectedRowRepository;
 
-    public ReportController(ReportService service, ILogger<ReportController> logger)
+    public ReportController(ReportService service, ILogger<ReportController> logger, ReportService reportService, IRejectedRowRepository rejectedRowRepository)
     {
         _service = service;
         _logger = logger;
+        _reportService = reportService;
+        _rejectedRowRepository = rejectedRowRepository;
     }
 
     // Get all files
@@ -60,5 +66,19 @@ public class ReportController : ControllerBase
             _logger.LogError(ex, "Error getting summary");
             return StatusCode(500, "Internal server error");
         }
+    }
+
+    [HttpGet("rejected-rows")]
+    public IActionResult GetRejectedRows()
+    {
+        var rows = _rejectedRowRepository.GetAll();
+        return Ok(rows);
+    }
+
+    [HttpGet("rejected-rows/{jobId}")]
+    public IActionResult GetRejectedRowsByJobId(string jobId)
+    {
+        var rows = _rejectedRowRepository.GetByJobId(jobId);
+        return Ok(rows);
     }
 }
