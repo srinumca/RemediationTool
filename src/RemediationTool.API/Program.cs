@@ -1,11 +1,13 @@
 using Amazon.S3;
 using FluentValidation;
 using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Application.Services;
 using RemediationTool.Application.Validators;
 using RemediationTool.Infrastructure;
 using RemediationTool.Infrastructure.Repositories;
+using RemediationTool.Infrastructure.Strategies;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +20,11 @@ builder.Services.AddSwaggerGen();
 
 // Validators
 builder.Services.AddValidatorsFromAssemblyContaining<FileFindingValidator>();
+builder.Services.Configure<IngestionProcessingOptions>(
+    builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
+builder.Services.AddSingleton<IIngestionCheckpointRepository, JsonIngestionCheckpointRepository>();
+builder.Services.AddSingleton<IIngestionStagingRepository, JsonIngestionStagingRepository>();
+builder.Services.AddScoped<IIngestionWorkingFileStrategy, ParquetIngestionWorkingFileStrategy>();
 
 // Repository / Persistence configuration
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Json";

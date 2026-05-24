@@ -36,4 +36,15 @@ public class IngestionController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("resume/{jobId}")]
+    public async Task<IActionResult> Resume(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return BadRequest("JobId is required.");
+
+        var result = await _ingestionService.ResumeAsync(jobId);
+
+        return Ok(result);
+    }
 }

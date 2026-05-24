@@ -1,0 +1,44 @@
+﻿using RemediationTool.Domain.Enum;
+
+namespace RemediationTool.Domain.Entities;
+
+public class IngestionCheckpoint
+{
+    public string JobId { get; set; } = string.Empty;
+
+    public string InboundFileName { get; set; } = string.Empty;
+
+    public string UserName { get; set; } = "System";
+
+    public string? SourceSystem { get; set; }
+
+    public string TriggerType { get; set; } = "Manual";
+
+    public string IngestionMode { get; set; } = "Full";
+
+    public int BatchSize { get; set; }
+
+    public int TotalBatches { get; set; }
+
+    public int LastSuccessfulBatchNumber { get; set; }
+
+    public int LastProcessedRecordCount { get; set; }
+
+    public int PersistedBatchCount { get; set; }
+
+    public int SuccessCount { get; set; }
+
+    public int RejectCount { get; set; }
+
+    public int BatchPersistenceRetryCount { get; set; }
+
+    public IngestionJobStatus Status { get; set; } = IngestionJobStatus.Started;
+
+    public bool IsResumeEligible { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public DateTime LastCheckpointUtc { get; set; } = DateTime.UtcNow;
+
+    public string? FailureReason { get; set; }
+}

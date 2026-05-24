@@ -26,5 +26,43 @@ public class IngestionUploadResponse
 
     public string Message { get; set; } = string.Empty;
 
+    public string? SourceSystem { get; set; }
+
+    public string TriggerType { get; set; } = "Manual";
+
+    public string IngestionMode { get; set; } = "Full";
+
+    public int PayloadRecordCount { get; set; }
+
+    public int ValidationFailureCount { get; set; }
+
     public List<RejectedRowSummary> RejectedRows { get; set; } = new();
+
+    public int BatchSize { get; set; }
+
+    public int TotalBatches { get; set; }
+
+    public int PersistedBatchCount { get; set; }
+
+    public int LastSuccessfulBatchNumber { get; set; }
+
+    public int LastProcessedRecordCount { get; set; }
+
+    public bool CheckpointingEnabled { get; set; }
+
+    public int BatchPersistenceRetryCount { get; set; }
+
+    public int MaxBatchPersistenceRetryCount { get; set; }
+
+    public bool IsResumeEligible { get; set; }
+
+    public DateTime? LastCheckpointUtc { get; set; }
+
+    public string? CheckpointMessage { get; set; }
+
+    public string? WorkingFileFormat { get; set; }
+
+    public string? WorkingFilePath { get; set; }
+
+    public int WorkingFileRecordCount { get; set; }
 }
