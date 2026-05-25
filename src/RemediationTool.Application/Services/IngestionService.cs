@@ -155,9 +155,40 @@ public class IngestionService : IIngestionService
                 response.RejectedRows);
 
 
-            var validFindings = findings.Where(x => x.IsValid).ToList();
+            var validFindings = findings
+    .Where(x => x.IsValid)
+    .ToList();
 
             _stagingRepository.SaveValidFindings(jobId, validFindings);
+
+            if (_processingOptions.EnableParquetWorkingFile && validFindings.Count > 0)
+            {
+                var workingFileResult = await _workingFileStrategy.WriteAsync(
+                    jobId,
+                    inboundFileName,
+                    validFindings);
+
+                response.WorkingFileFormat = workingFileResult.Format;
+                response.WorkingFilePath = workingFileResult.Path;
+                response.WorkingFileRecordCount = workingFileResult.RecordCount;
+
+                jobAudit.WorkingFileFormat = workingFileResult.Format;
+                jobAudit.WorkingFilePath = workingFileResult.Path;
+                jobAudit.WorkingFileRecordCount = workingFileResult.RecordCount;
+
+                _logger.LogInformation(
+                    "Ingestion working file created. JobId: {JobId}, Format: {Format}, Path: {Path}, RecordCount: {RecordCount}",
+                    jobId,
+                    workingFileResult.Format,
+                    workingFileResult.Path,
+                    workingFileResult.RecordCount);
+            }
+
+            PersistValidFindingsInBatches(
+                validFindings,
+                response,
+                jobAudit,
+                configuredBatchSize);
 
             response.Status = DetermineFinalStatus(response.SuccessCount, response.RejectCount);
             response.CompletedAtUtc = DateTime.UtcNow;
@@ -947,8 +978,13 @@ public class IngestionService : IIngestionService
             SourceSystem = response.SourceSystem,
             TriggerType = response.TriggerType,
             IngestionMode = response.IngestionMode,
+
+            StartedAtUtc = response.StartedAtUtc,
+            CompletedAtUtc = response.CompletedAtUtc,
+
             ProcessingStartTimeUtc = response.StartedAtUtc,
             ProcessingEndTimeUtc = response.CompletedAtUtc,
+
             PayloadRecordCount = response.PayloadRecordCount,
             TotalRowsProcessed = response.TotalRecords,
             SuccessfulRows = response.SuccessCount,
@@ -963,6 +999,7 @@ public class IngestionService : IIngestionService
             CheckpointingEnabled = response.CheckpointingEnabled,
             BatchPersistenceRetryCount = response.BatchPersistenceRetryCount,
             MaxBatchPersistenceRetryCount = response.MaxBatchPersistenceRetryCount,
+
             WorkingFileFormat = response.WorkingFileFormat,
             WorkingFilePath = response.WorkingFilePath,
             WorkingFileRecordCount = response.WorkingFileRecordCount,
