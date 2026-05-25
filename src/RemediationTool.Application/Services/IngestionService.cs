@@ -1419,13 +1419,20 @@ public class IngestionService : IIngestionService
                 checkpoint.LastSuccessfulBatchNumber,
                 checkpoint.TotalBatches);
 
-            var stagedRecordCount = _stagingRepository.CountByJobId(jobId);
+            List<FileFinding> recordsToResume;
 
-            if (stagedRecordCount == 0)
+            try
+            {
+                recordsToResume = await LoadRecordsForResumeAsync(
+                    jobId,
+                    checkpoint,
+                    response);
+            }
+            catch (Exception ex)
             {
                 response.Status = IngestionJobStatus.Failed;
                 response.CompletedAtUtc = DateTime.UtcNow;
-                response.Message = "Resume failed. No staged records were found for this JobId. Re-upload may be required.";
+                response.Message = ex.Message;
                 response.IsResumeEligible = false;
                 response.CheckpointMessage = "No staged records found for resume.";
 
@@ -1436,10 +1443,6 @@ public class IngestionService : IIngestionService
 
                 return response;
             }
-
-            var recordsToResume = _stagingRepository.GetValidFindingsAfter(
-                jobId,
-                checkpoint.LastProcessedRecordCount);
 
             if (recordsToResume.Count == 0)
             {
@@ -1515,6 +1518,31 @@ public class IngestionService : IIngestionService
 
             return response;
         }
+    }
+
+    private Task<List<FileFinding>> LoadRecordsForResumeAsync(
+    string jobId,
+    IngestionCheckpoint checkpoint,
+    IngestionUploadResponse response)
+    {
+        _logger.LogInformation(
+            "Loading resume records from JSON staging. JobId: {JobId}, LastProcessedRecordCount: {LastProcessedRecordCount}",
+            jobId,
+            checkpoint.LastProcessedRecordCount);
+
+        var stagedRecordCount = _stagingRepository.CountByJobId(jobId);
+
+        if (stagedRecordCount == 0)
+        {
+            throw new InvalidOperationException(
+                "Resume failed. No staged records were found for this JobId. Re-upload may be required.");
+        }
+
+        var recordsToResume = _stagingRepository.GetValidFindingsAfter(
+            jobId,
+            checkpoint.LastProcessedRecordCount);
+
+        return Task.FromResult(recordsToResume);
     }
 }
     

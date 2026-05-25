@@ -11,6 +11,11 @@ public interface IIngestionWorkingFileStrategy
         string inboundFileName,
         IReadOnlyList<FileFinding> validFindings,
         CancellationToken cancellationToken = default);
+
+    Task<List<FileFinding>> ReadAfterAsync(
+        string workingFilePath,
+        int lastProcessedRecordCount,
+        CancellationToken cancellationToken = default);
 }
 
 public class IngestionWorkingFileResult
