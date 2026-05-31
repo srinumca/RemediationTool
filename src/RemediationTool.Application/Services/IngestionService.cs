@@ -11,9 +11,9 @@ using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
-using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
+using RemediationTool.Domain.Enums;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -32,7 +32,6 @@ public class IngestionService : IIngestionService
     private readonly IRejectedRowRepository _rejectedRowRepository;
     private readonly IngestionProcessingOptions _processingOptions;
     private readonly IIngestionCheckpointRepository _checkpointRepository;
-
     private readonly IIngestionStagingRepository _stagingRepository;
     private readonly IIngestionWorkingFileStrategy _workingFileStrategy;
 
@@ -111,27 +110,22 @@ public class IngestionService : IIngestionService
         _jobAuditRepository.Add(jobAudit);
 
         var checkpoint = BuildCheckpoint(response, jobAudit, IngestionJobStatus.Started);
-
         _checkpointRepository.Upsert(checkpoint);
+
         try
         {
             _logger.LogInformation(
                 "Ingestion started. JobId: {JobId}, FileName: {FileName}",
-                jobId,
-                inboundFileName);
+                jobId, inboundFileName);
 
             var archiveKey = IngestionArchivePathBuilder.BuildOriginalFilePath(
-                jobId,
-                inboundFileName,
-                startedAtUtc);
+                jobId, inboundFileName, startedAtUtc);
 
             await _storage.UploadAsync(archiveKey, file.OpenReadStream());
             response.ArchivedFilePath = archiveKey;
 
             List<FileFinding> findings;
-
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-
             using var stream = file.OpenReadStream();
 
             findings = ext switch
@@ -145,50 +139,38 @@ public class IngestionService : IIngestionService
             response.PayloadRecordCount = findings.Count;
             response.RejectCount = findings.Count(x => !x.IsValid);
             response.SuccessCount = findings.Count(x => x.IsValid);
+
+            response.FindingTypeCounts = findings.Where(x => x.IsValid)
+                .GroupBy(x => x.FindingType.ToString(),StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count());
+
             response.ValidationFailureCount = response.RejectCount;
             response.SourceSystem = ResolveSourceSystem(findings);
 
+            PersistRejectedRows(jobId, inboundFileName, response.RejectedRows);
 
-            PersistRejectedRows(
-                jobId,
-                inboundFileName,
-                response.RejectedRows);
-
-
-            var validFindings = findings
-    .Where(x => x.IsValid)
-    .ToList();
+            var validFindings = findings.Where(x => x.IsValid).ToList();
 
             _stagingRepository.SaveValidFindings(jobId, validFindings);
 
             if (_processingOptions.EnableParquetWorkingFile && validFindings.Count > 0)
             {
                 var workingFileResult = await _workingFileStrategy.WriteAsync(
-                    jobId,
-                    inboundFileName,
-                    validFindings);
+                    jobId, inboundFileName, validFindings);
 
                 response.WorkingFileFormat = workingFileResult.Format;
                 response.WorkingFilePath = workingFileResult.Path;
                 response.WorkingFileRecordCount = workingFileResult.RecordCount;
-
                 jobAudit.WorkingFileFormat = workingFileResult.Format;
                 jobAudit.WorkingFilePath = workingFileResult.Path;
                 jobAudit.WorkingFileRecordCount = workingFileResult.RecordCount;
 
                 _logger.LogInformation(
                     "Ingestion working file created. JobId: {JobId}, Format: {Format}, Path: {Path}, RecordCount: {RecordCount}",
-                    jobId,
-                    workingFileResult.Format,
-                    workingFileResult.Path,
-                    workingFileResult.RecordCount);
+                    jobId, workingFileResult.Format, workingFileResult.Path, workingFileResult.RecordCount);
             }
 
-            PersistValidFindingsInBatches(
-                validFindings,
-                response,
-                jobAudit,
-                configuredBatchSize);
+            PersistValidFindingsInBatches(validFindings, response, jobAudit, configuredBatchSize);
 
             response.Status = DetermineFinalStatus(response.SuccessCount, response.RejectCount);
             response.CompletedAtUtc = DateTime.UtcNow;
@@ -200,68 +182,64 @@ public class IngestionService : IIngestionService
                 response.SuccessCount,
                 response.RejectCount);
 
+            // Clean up staging data once the job is fully complete (Success or PartialSuccess).
+            // Failed jobs retain their staged records so resume can pick up from the last checkpoint.
+            if (response.Status == IngestionJobStatus.Success
+                || response.Status == IngestionJobStatus.PartialSuccess)
+            {
+                try
+                {
+                    _stagingRepository.DeleteByJobId(jobId);
+                    _logger.LogInformation(
+                        "Staging records cleaned up after job completion. JobId: {JobId}", jobId);
+                }
+                catch (Exception cleanupEx)
+                {
+                    // Cleanup failure must never block the successful ingestion response.
+                    // Log and continue — staging file will be cleaned up on next run for this jobId.
+                    _logger.LogWarning(
+                        cleanupEx,
+                        "Failed to clean up staging records. JobId: {JobId}. Will be cleaned on next upload.", jobId);
+                }
+            }
+
             response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
 
             UpdateJobAudit(jobAudit, response);
 
             _logger.LogInformation(
                 "Ingestion completed. JobId: {JobId}, Status: {Status}, Total: {Total}, Success: {Success}, Rejected: {Rejected}",
-                jobId,
-                response.Status,
-                response.TotalRecords,
-                response.SuccessCount,
-                response.RejectCount);
+                jobId, response.Status, response.TotalRecords, response.SuccessCount, response.RejectCount);
 
             return response;
         }
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Ingestion failed. JobId: {JobId}, FileName: {FileName}",
-                jobId,
-                inboundFileName);
+            _logger.LogError(ex, "Ingestion failed. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
 
             response.Status = IngestionJobStatus.Failed;
             response.CompletedAtUtc = DateTime.UtcNow;
             response.Message = $"Ingestion failed: {ex.Message}";
-
             response.ValidationFailureCount = response.RejectCount;
             response.SourceSystem ??= "Unknown";
 
-            try
-            {
-                UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message);
-            }
+            try { UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message); }
             catch (Exception checkpointEx)
-            {
-                _logger.LogError(
-                    checkpointEx,
-                    "Failed to update ingestion checkpoint. JobId: {JobId}",
-                    jobId);
-            }
+            { _logger.LogError(checkpointEx, "Failed to update ingestion checkpoint. JobId: {JobId}", jobId); }
 
-            try
-            {
-                UpdateJobAudit(jobAudit, response, ex.Message);
-            }
+            try { UpdateJobAudit(jobAudit, response, ex.Message); }
             catch (Exception auditEx)
-            {
-                _logger.LogError(
-                    auditEx,
-                    "Failed to update ingestion job audit. JobId: {JobId}",
-                    jobId);
-            }
+            { _logger.LogError(auditEx, "Failed to update ingestion job audit. JobId: {JobId}", jobId); }
 
             return response;
         }
     }
 
     private void PersistValidFindingsInBatches(
-    List<FileFinding> validFindings,
-    IngestionUploadResponse response,
-    IngestionJobAudit jobAudit,
-    int batchSize)
+        List<FileFinding> validFindings,
+        IngestionUploadResponse response,
+        IngestionJobAudit jobAudit,
+        int batchSize)
     {
         if (validFindings.Count == 0)
         {
@@ -269,46 +247,32 @@ public class IngestionService : IIngestionService
             response.PersistedBatchCount = 0;
             response.LastSuccessfulBatchNumber = 0;
             response.LastProcessedRecordCount = 0;
-
             jobAudit.TotalBatches = 0;
             jobAudit.PersistedBatchCount = 0;
             jobAudit.LastSuccessfulBatchNumber = 0;
             jobAudit.LastProcessedRecordCount = 0;
-
             _jobAuditRepository.Update(jobAudit);
-
             return;
         }
 
         var batches = validFindings
             .Chunk(batchSize)
-            .Select((items, index) => new
-            {
-                BatchNumber = index + 1,
-                Records = items.ToList()
-            })
+            .Select((items, index) => new { BatchNumber = index + 1, Records = items.ToList() })
             .ToList();
 
         response.TotalBatches = batches.Count;
         jobAudit.TotalBatches = batches.Count;
-
         _jobAuditRepository.Update(jobAudit);
 
         foreach (var batch in batches)
         {
             try
             {
-                PersistBatchWithRetry(
-                    batch.Records,
-                    batch.BatchNumber,
-                    batches.Count,
-                    response,
-                    jobAudit);
+                PersistBatchWithRetry(batch.Records, batch.BatchNumber, batches.Count, response, jobAudit);
 
                 response.PersistedBatchCount++;
                 response.LastSuccessfulBatchNumber = batch.BatchNumber;
                 response.LastProcessedRecordCount += batch.Records.Count;
-
                 jobAudit.PersistedBatchCount = response.PersistedBatchCount;
                 jobAudit.LastSuccessfulBatchNumber = response.LastSuccessfulBatchNumber;
                 jobAudit.LastProcessedRecordCount = response.LastProcessedRecordCount;
@@ -322,30 +286,15 @@ public class IngestionService : IIngestionService
 
                 _logger.LogInformation(
                     "Ingestion batch persisted. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, BatchSize: {BatchSize}, RecordsPersisted: {RecordsPersisted}, RetryCount: {RetryCount}",
-                    response.JobId,
-                    batch.BatchNumber,
-                    batches.Count,
-                    batchSize,
-                    batch.Records.Count,
-                    response.BatchPersistenceRetryCount);
+                    response.JobId, batch.BatchNumber, batches.Count, batchSize, batch.Records.Count, response.BatchPersistenceRetryCount);
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
+                _logger.LogError(ex,
                     "Ingestion batch persistence failed after Polly retries. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, LastSuccessfulBatch: {LastSuccessfulBatch}, LastProcessedRecordCount: {LastProcessedRecordCount}",
-                    response.JobId,
-                    batch.BatchNumber,
-                    batches.Count,
-                    response.LastSuccessfulBatchNumber,
-                    response.LastProcessedRecordCount);
+                    response.JobId, batch.BatchNumber, batches.Count, response.LastSuccessfulBatchNumber, response.LastProcessedRecordCount);
 
-                UpdateCheckpoint(
-                    response,
-                    jobAudit,
-                    IngestionJobStatus.Failed,
-                    ex.Message);
-
+                UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message);
                 _jobAuditRepository.Update(jobAudit);
 
                 throw new InvalidOperationException(
@@ -357,116 +306,82 @@ public class IngestionService : IIngestionService
 
     private int ResolveBatchSize()
     {
-        var configuredBatchSize = _processingOptions.BatchSize;
-
-        if (configuredBatchSize < _processingOptions.MinBatchSize)
-            return _processingOptions.MinBatchSize;
-
-        if (configuredBatchSize > _processingOptions.MaxBatchSize)
-            return _processingOptions.MaxBatchSize;
-
-        return configuredBatchSize;
+        var size = _processingOptions.BatchSize;
+        if (size < _processingOptions.MinBatchSize) return _processingOptions.MinBatchSize;
+        if (size > _processingOptions.MaxBatchSize) return _processingOptions.MaxBatchSize;
+        return size;
     }
 
     private static string ResolveSourceSystem(List<FileFinding> findings)
     {
-        var sourceSystems = findings
-            .Where(finding => !string.IsNullOrWhiteSpace(finding.OriginatingDataSystem))
-            .Select(finding => finding.OriginatingDataSystem.Trim())
+        var systems = findings
+            .Where(f => !string.IsNullOrWhiteSpace(f.OriginatingDataSystem))
+            .Select(f => f.OriginatingDataSystem.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return sourceSystems.Count switch
-        {
-            0 => "Unknown",
-            1 => sourceSystems[0],
-            _ => "Multiple"
-        };
+        return systems.Count switch { 0 => "Unknown", 1 => systems[0], _ => "Multiple" };
     }
 
     private static string SerializeFindingAsRawRow(FileFinding finding)
     {
-        return JsonSerializer.Serialize(
-            new
-            {
-                finding.SourceRecordId,
-                finding.FindingFileName,
-                finding.FindingFileFormat,
-                finding.FindingFileSizeBytes,
-                finding.CurrentFileLocation,
-                finding.FindingType,
-                finding.OriginatingDataSystem,
-                finding.OriginatingVendorTool,
-                finding.OriginalFileLocation,
-                finding.QuarantineDateUtc,
-                finding.LastModifiedDateUtc,
-                finding.CreatedDateUtc,
-                finding.LastAccessedDateUtc,
-                finding.SiteOwner,
-                finding.FileOwner,
-                finding.BusinessUnit,
-                finding.Division,
-                finding.Department,
-                finding.Region,
-                finding.Country,
-                finding.PolicyName,
-                finding.PolicyId,
-                finding.FindingReason,
-                finding.RiskLevel,
-                finding.SensitivityLabel,
-                finding.DetectionDateUtc,
-                finding.RecommendedAction,
-                finding.RestorationTicketIdentifier,
-                finding.RestorationRequestorEmail,
-                finding.RestorationComment
-            },
-            new JsonSerializerOptions
-            {
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-            });
+        return JsonSerializer.Serialize(new
+        {
+            finding.SourceRecordId,
+            finding.FindingFileName,
+            finding.FindingFileFormat,
+            finding.FindingFileSizeBytes,
+            finding.CurrentFileLocation,
+            FindingType = finding.FindingType.ToString(),
+            finding.DataSystem,
+            finding.OriginatingDataSystem,
+            finding.OriginatingVendorTool,
+            finding.OriginalFileLocation,
+            finding.QuarantineDateUtc,
+            finding.LastModifiedDateUtc,
+            finding.CreatedDateUtc,
+            finding.LastAccessedDateUtc,
+            finding.SiteOwner,
+            finding.FileOwner,
+            finding.BusinessUnit,
+            finding.Division,
+            finding.Department,
+            finding.Region,
+            finding.Country,
+            finding.PolicyName,
+            finding.PolicyId,
+            finding.FindingReason,
+            finding.RiskLevel,
+            finding.SensitivityLabel,
+            finding.DetectionDateUtc,
+            finding.RecommendedAction,
+            finding.RestorationTicketIdentifier,
+            finding.RestorationRequestorEmail,
+            finding.RestorationComment
+        }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
     }
 
-
     private List<FileFinding> ParseExcel(
-        Stream stream,
-        string jobId,
-        string inboundFileName,
-        string uploadedBy,
-        DateTime loadTime,
-        List<RejectedRowSummary> rejectedRows)
+        Stream stream, string jobId, string inboundFileName,
+        string uploadedBy, DateTime loadTime, List<RejectedRowSummary> rejectedRows)
     {
         var findings = new List<FileFinding>();
-
         using var workbook = new XLWorkbook(stream);
         var sheet = workbook.Worksheet(1);
-
         var headerMap = BuildExcelHeaderMap(sheet);
 
         foreach (var row in sheet.RowsUsed().Skip(1))
         {
             var rowNumber = row.RowNumber();
-
-            var finding = MapExcelRowToFinding(
-                            row,
-                            headerMap,
-                            jobId,
-                            inboundFileName,
-                            uploadedBy,
-                            loadTime);
+            var finding = MapExcelRowToFinding(row, headerMap, jobId, inboundFileName, uploadedBy, loadTime);
 
             if (IsBlankFinding(finding))
             {
-                _logger.LogDebug(
-                    "Blank Excel row skipped. JobId: {JobId}, RowNumber: {RowNumber}",
-                    jobId,
-                    rowNumber);
-
+                _logger.LogDebug("Blank Excel row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
                 continue;
             }
 
-            MapApprovedFieldsToExistingPocFields(finding);
             ApplyValidation(finding, rowNumber, rejectedRows);
-
             findings.Add(finding);
         }
 
@@ -480,7 +395,7 @@ public class IngestionService : IIngestionService
             && string.IsNullOrWhiteSpace(finding.FindingFileFormat)
             && !finding.FindingFileSizeBytes.HasValue
             && string.IsNullOrWhiteSpace(finding.CurrentFileLocation)
-            && string.IsNullOrWhiteSpace(finding.FindingType)
+            && finding.FindingType == default
             && string.IsNullOrWhiteSpace(finding.OriginatingDataSystem)
             && string.IsNullOrWhiteSpace(finding.OriginatingVendorTool)
             && string.IsNullOrWhiteSpace(finding.OriginalFileLocation)
@@ -490,15 +405,10 @@ public class IngestionService : IIngestionService
     }
 
     private List<FileFinding> ParseCsv(
-    Stream stream,
-    string jobId,
-    string inboundFileName,
-    string uploadedBy,
-    DateTime loadTime,
-    List<RejectedRowSummary> rejectedRows)
+        Stream stream, string jobId, string inboundFileName,
+        string uploadedBy, DateTime loadTime, List<RejectedRowSummary> rejectedRows)
     {
         var findings = new List<FileFinding>();
-
         using var reader = new StreamReader(stream);
         using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
 
@@ -506,11 +416,8 @@ public class IngestionService : IIngestionService
         {
             if (!csv.Read())
                 throw new InvalidDataException("CSV file does not contain a header row.");
-
             csv.ReadHeader();
-
-            var headers = csv.HeaderRecord?.ToList() ?? new List<string>();
-            ValidateHeaders(headers);
+            ValidateHeaders(csv.HeaderRecord?.ToList() ?? new List<string>());
         }
         catch (Exception ex)
         {
@@ -523,64 +430,32 @@ public class IngestionService : IIngestionService
 
             try
             {
-                if (!csv.Read())
-                    break;
-
+                if (!csv.Read()) break;
                 rowNumber = csv.Context.Parser.Row;
 
-                var finding = MapCsvRowToFinding(
-                    csv,
-                    jobId,
-                    inboundFileName,
-                    uploadedBy,
-                    loadTime);
+                var finding = MapCsvRowToFinding(csv, jobId, inboundFileName, uploadedBy, loadTime);
 
                 if (IsBlankFinding(finding))
                 {
-                    _logger.LogDebug(
-                        "Blank CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}",
-                        jobId,
-                        rowNumber);
-
+                    _logger.LogDebug("Blank CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
                     continue;
                 }
 
-                MapApprovedFieldsToExistingPocFields(finding);
                 ApplyValidation(finding, rowNumber, rejectedRows);
-
                 findings.Add(finding);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(
-                    ex,
-                    "Malformed CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}",
-                    jobId,
-                    rowNumber);
+                _logger.LogWarning(ex, "Malformed CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
 
-                var rejectedFinding = new FileFinding
-                {
-                    Id = Guid.NewGuid(),
-                    RecordVersionId = Guid.NewGuid().ToString("N"),
-                    IngestionJobId = jobId,
-                    InboundFileName = inboundFileName,
-                    UserName = uploadedBy,
-                    LoadDateUtc = loadTime,
-                    LastUpdateDateUtc = loadTime,
-                    Status = FileStatus.Failed,
-                    IsValid = false,
-                    ErrorReason = $"Malformed CSV row. {ex.Message}"
-                };
-
-                findings.Add(rejectedFinding);
-
+                // Only create a RejectedRowSummary — do NOT add a FileFinding for malformed rows
                 rejectedRows.Add(new RejectedRowSummary
                 {
                     RejectedRowId = Guid.NewGuid().ToString("N"),
-                    SourceRecordId = rejectedFinding.SourceRecordId,
-                    FindingFileName = rejectedFinding.FindingFileName,
-                    FindingType = rejectedFinding.FindingType,
-                    UserName = rejectedFinding.UserName,
+                    SourceRecordId = null,
+                    FindingFileName = null,
+                    FindingType = null,
+                    UserName = uploadedBy,
                     RowNumber = rowNumber,
                     FieldName = "CSV_ROW",
                     RejectedValue = null,
@@ -593,17 +468,15 @@ public class IngestionService : IIngestionService
 
         return findings;
     }
+
     private FileFinding MapExcelRowToFinding(
-    IXLRow row,
-    Dictionary<string, int> headerMap,
-    string jobId,
-    string inboundFileName,
-    string uploadedBy,
-    DateTime loadTime)
+        IXLRow row, Dictionary<string, int> headerMap,
+        string jobId, string inboundFileName, string uploadedBy, DateTime loadTime)
     {
         return new FileFinding
         {
-            Id = BuildStableFindingId(GetExcelValue(row, headerMap, InboundLayoutColumns.SourceRecordId)),
+            // Id is always system-generated — never derived from inbound data
+            Id = Guid.NewGuid(),
             RecordVersionId = Guid.NewGuid().ToString("N"),
             SourceRecordId = NullIfWhiteSpace(GetExcelValue(row, headerMap, InboundLayoutColumns.SourceRecordId)),
 
@@ -611,7 +484,8 @@ public class IngestionService : IIngestionService
             FindingFileFormat = GetExcelValue(row, headerMap, InboundLayoutColumns.FindingFileFormat),
             FindingFileSizeBytes = TryParseNullableLong(GetExcelValue(row, headerMap, InboundLayoutColumns.FindingFileSize)),
             CurrentFileLocation = GetExcelValue(row, headerMap, InboundLayoutColumns.CurrentFileLocation),
-            FindingType = GetExcelValue(row, headerMap, InboundLayoutColumns.FindingType),
+            FindingType = ParseFindingType(GetExcelValue(row, headerMap, InboundLayoutColumns.FindingType)),
+            DataSystem = GetExcelValue(row, headerMap, InboundLayoutColumns.DataSystem),
 
             OriginatingDataSystem = GetExcelValue(row, headerMap, InboundLayoutColumns.OriginatingDataSystem),
             OriginatingVendorTool = GetExcelValue(row, headerMap, InboundLayoutColumns.OriginatingVendorTool),
@@ -643,8 +517,6 @@ public class IngestionService : IIngestionService
             RestorationRequestorEmail = NullIfWhiteSpace(GetExcelValue(row, headerMap, InboundLayoutColumns.RestorationRequestorEmail)),
             RestorationComment = NullIfWhiteSpace(GetExcelValue(row, headerMap, InboundLayoutColumns.RestorationComment)),
 
-            Status = FileStatus.Loaded,
-
             IngestionJobId = jobId,
             InboundFileName = inboundFileName,
             UserName = uploadedBy,
@@ -654,15 +526,13 @@ public class IngestionService : IIngestionService
     }
 
     private FileFinding MapCsvRowToFinding(
-    CsvReader csv,
-    string jobId,
-    string inboundFileName,
-    string uploadedBy,
-    DateTime loadTime)
+        CsvReader csv, string jobId, string inboundFileName,
+        string uploadedBy, DateTime loadTime)
     {
         return new FileFinding
         {
-            Id = BuildStableFindingId(GetCsvValue(csv, InboundLayoutColumns.SourceRecordId)),
+            // Id is always system-generated — never derived from inbound data
+            Id = Guid.NewGuid(),
             RecordVersionId = Guid.NewGuid().ToString("N"),
             SourceRecordId = NullIfWhiteSpace(GetCsvValue(csv, InboundLayoutColumns.SourceRecordId)),
 
@@ -670,7 +540,8 @@ public class IngestionService : IIngestionService
             FindingFileFormat = GetCsvValue(csv, InboundLayoutColumns.FindingFileFormat),
             FindingFileSizeBytes = TryParseNullableLong(GetCsvValue(csv, InboundLayoutColumns.FindingFileSize)),
             CurrentFileLocation = GetCsvValue(csv, InboundLayoutColumns.CurrentFileLocation),
-            FindingType = GetCsvValue(csv, InboundLayoutColumns.FindingType),
+            FindingType = ParseFindingType(GetCsvValue(csv, InboundLayoutColumns.FindingType)),
+            DataSystem = GetCsvValue(csv, InboundLayoutColumns.DataSystem),
 
             OriginatingDataSystem = GetCsvValue(csv, InboundLayoutColumns.OriginatingDataSystem),
             OriginatingVendorTool = GetCsvValue(csv, InboundLayoutColumns.OriginatingVendorTool),
@@ -702,8 +573,6 @@ public class IngestionService : IIngestionService
             RestorationRequestorEmail = NullIfWhiteSpace(GetCsvValue(csv, InboundLayoutColumns.RestorationRequestorEmail)),
             RestorationComment = NullIfWhiteSpace(GetCsvValue(csv, InboundLayoutColumns.RestorationComment)),
 
-            Status = FileStatus.Loaded,
-
             IngestionJobId = jobId,
             InboundFileName = inboundFileName,
             UserName = uploadedBy,
@@ -712,23 +581,39 @@ public class IngestionService : IIngestionService
         };
     }
 
+    /// <summary>
+    /// Parses the inbound string value for Finding_Type into the FindingType enum.
+    /// Normalises "Not Obsolete" → "NotObsolete" before enum parsing.
+    /// Invalid values fall through to default (FindingType.Obsolete = 0) and will be
+    /// caught by FileFindingValidator.IsInEnum() as an invalid enum value.
+    /// </summary>
+    private static FindingType ParseFindingType(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return default;
+
+        // Normalise spaced variants: "Not Obsolete" → "NotObsolete"
+        var normalised = value.Trim().Replace(" ", string.Empty);
+
+        return Enum.TryParse<FindingType>(normalised, ignoreCase: true, out var result)
+            ? result
+            : default;  // Invalid value — caught by IsInEnum() in FileFindingValidator
+    }
+
     private void ApplyValidation(
-    FileFinding finding,
-    int rowNumber,
-    List<RejectedRowSummary> rejectedRows)
+        FileFinding finding, int rowNumber, List<RejectedRowSummary> rejectedRows)
     {
         var result = _validator.Validate(finding);
 
         if (result.IsValid)
         {
             finding.IsValid = true;
-            finding.ErrorReason = string.Empty;
+            finding.IngestionErrorReason = string.Empty;
             return;
         }
 
         finding.IsValid = false;
-        finding.Status = FileStatus.Failed;
-        finding.ErrorReason = string.Join(", ", result.Errors.Select(error => error.ErrorMessage));
+        finding.IngestionErrorReason = string.Join(", ", result.Errors.Select(e => e.ErrorMessage));
 
         var rawRowJson = SerializeFindingAsRawRow(finding);
 
@@ -739,7 +624,7 @@ public class IngestionService : IIngestionService
                 RejectedRowId = Guid.NewGuid().ToString("N"),
                 SourceRecordId = finding.SourceRecordId,
                 FindingFileName = finding.FindingFileName,
-                FindingType = finding.FindingType,
+                FindingType = finding.FindingType.ToString(),
                 UserName = finding.UserName,
                 RowNumber = rowNumber,
                 FieldName = error.PropertyName,
@@ -753,31 +638,18 @@ public class IngestionService : IIngestionService
 
     private IngestionJobStatus DetermineFinalStatus(int successCount, int rejectCount)
     {
-        if (successCount > 0 && rejectCount == 0)
-            return IngestionJobStatus.Success;
-
-        if (successCount > 0 && rejectCount > 0)
-            return IngestionJobStatus.PartialSuccess;
-
+        if (successCount > 0 && rejectCount == 0) return IngestionJobStatus.Success;
+        if (successCount > 0 && rejectCount > 0) return IngestionJobStatus.PartialSuccess;
         return IngestionJobStatus.Failed;
     }
 
-    private string BuildResponseMessage(
-        IngestionJobStatus status,
-        int successCount,
-        int rejectCount)
+    private string BuildResponseMessage(IngestionJobStatus status, int successCount, int rejectCount)
     {
         return status switch
         {
-            IngestionJobStatus.Success =>
-                "File processed successfully.",
-
-            IngestionJobStatus.PartialSuccess =>
-                $"File processed with partial success. Success: {successCount}, Rejected: {rejectCount}.",
-
-            IngestionJobStatus.Failed =>
-                "File processing failed. No valid records were ingested.",
-
+            IngestionJobStatus.Success => "File processed successfully.",
+            IngestionJobStatus.PartialSuccess => $"File processed with partial success. Success: {successCount}, Rejected: {rejectCount}.",
+            IngestionJobStatus.Failed => "File processing failed. No valid records were ingested.",
             _ => "File processing completed."
         };
     }
@@ -791,7 +663,8 @@ public class IngestionService : IIngestionService
             nameof(FileFinding.FindingFileFormat) => finding.FindingFileFormat,
             nameof(FileFinding.FindingFileSizeBytes) => finding.FindingFileSizeBytes?.ToString(CultureInfo.InvariantCulture),
             nameof(FileFinding.CurrentFileLocation) => finding.CurrentFileLocation,
-            nameof(FileFinding.FindingType) => finding.FindingType,
+            nameof(FileFinding.FindingType) => finding.FindingType.ToString(),
+            nameof(FileFinding.DataSystem) => finding.DataSystem,
             nameof(FileFinding.OriginatingDataSystem) => finding.OriginatingDataSystem,
             nameof(FileFinding.OriginatingVendorTool) => finding.OriginatingVendorTool,
             nameof(FileFinding.LastModifiedDateUtc) => finding.LastModifiedDateUtc?.ToString("O"),
@@ -799,6 +672,7 @@ public class IngestionService : IIngestionService
             nameof(FileFinding.LastAccessedDateUtc) => finding.LastAccessedDateUtc?.ToString("O"),
             nameof(FileFinding.OriginalFileLocation) => finding.OriginalFileLocation,
             nameof(FileFinding.QuarantineDateUtc) => finding.QuarantineDateUtc?.ToString("O"),
+            nameof(FileFinding.ExceptionDateUtc) => finding.ExceptionDateUtc?.ToString("O"),
             nameof(FileFinding.RestorationTicketIdentifier) => finding.RestorationTicketIdentifier,
             nameof(FileFinding.RestorationRequestorEmail) => finding.RestorationRequestorEmail,
             nameof(FileFinding.RestorationComment) => finding.RestorationComment,
@@ -809,8 +683,8 @@ public class IngestionService : IIngestionService
     private void ValidateHeaders(IEnumerable<string?> headers)
     {
         var headerList = headers
-            .Where(header => !string.IsNullOrWhiteSpace(header))
-            .Select(header => header!.Trim())
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Select(h => h!.Trim())
             .ToList();
 
         if (headerList.Count == 0)
@@ -818,63 +692,44 @@ public class IngestionService : IIngestionService
 
         var duplicateHeaders = headerList
             .GroupBy(NormalizeHeader, StringComparer.OrdinalIgnoreCase)
-            .Where(group => group.Count() > 1)
-            .Select(group => group.First())
+            .Where(g => g.Count() > 1)
+            .Select(g => g.First())
             .ToList();
 
         if (duplicateHeaders.Any())
-        {
             throw new InvalidDataException(
                 $"Uploaded file contains duplicate headers: {string.Join(", ", duplicateHeaders)}");
-        }
 
-        var normalizedHeaders = headerList
-            .Select(NormalizeHeader)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var normalizedHeaders = headerList.Select(NormalizeHeader).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var missingRequiredColumns = InboundLayoutColumns.RequiredColumns
-            .Where(requiredColumn => !normalizedHeaders.Contains(NormalizeHeader(requiredColumn)))
+        var missingRequired = InboundLayoutColumns.RequiredColumns
+            .Where(col => !normalizedHeaders.Contains(NormalizeHeader(col)))
             .ToList();
 
-        if (missingRequiredColumns.Any())
-        {
+        if (missingRequired.Any())
             throw new InvalidDataException(
-                $"Uploaded file is missing required columns: {string.Join(", ", missingRequiredColumns)}");
-        }
+                $"Uploaded file is missing required columns: {string.Join(", ", missingRequired)}");
     }
 
     private Dictionary<string, int> BuildExcelHeaderMap(IXLWorksheet sheet)
     {
-        var headerRow = sheet.FirstRowUsed();
+        var headerRow = sheet.FirstRowUsed()
+            ?? throw new InvalidDataException("Excel file does not contain a header row.");
 
-        if (headerRow == null)
-            throw new InvalidDataException("Excel file does not contain a header row.");
-
-        var headers = headerRow.CellsUsed()
-            .Select(cell => cell.GetString())
-            .ToList();
-
+        var headers = headerRow.CellsUsed().Select(c => c.GetString()).ToList();
         ValidateHeaders(headers);
 
         return headerRow.CellsUsed()
-            .GroupBy(cell => NormalizeHeader(cell.GetString()), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First().Address.ColumnNumber,
-                StringComparer.OrdinalIgnoreCase);
+            .GroupBy(c => NormalizeHeader(c.GetString()), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Address.ColumnNumber, StringComparer.OrdinalIgnoreCase);
     }
 
-    private string GetExcelValue(
-        IXLRow row,
-        Dictionary<string, int> headerMap,
-        string columnName)
+    private string GetExcelValue(IXLRow row, Dictionary<string, int> headerMap, string columnName)
     {
-        var normalizedColumnName = NormalizeHeader(columnName);
-
-        if (!headerMap.TryGetValue(normalizedColumnName, out var columnNumber))
-            return string.Empty;
-
-        return row.Cell(columnNumber).GetString()?.Trim() ?? string.Empty;
+        var key = NormalizeHeader(columnName);
+        return headerMap.TryGetValue(key, out var col)
+            ? row.Cell(col).GetString()?.Trim() ?? string.Empty
+            : string.Empty;
     }
 
     private string GetCsvValue(CsvReader csv, string columnName)
@@ -882,91 +737,40 @@ public class IngestionService : IIngestionService
         try
         {
             var headers = csv.HeaderRecord;
+            if (headers == null || headers.Length == 0) return string.Empty;
 
-            if (headers == null || headers.Length == 0)
-                return string.Empty;
+            var match = headers.FirstOrDefault(h =>
+                string.Equals(NormalizeHeader(h), NormalizeHeader(columnName), StringComparison.OrdinalIgnoreCase));
 
-            var matchingHeader = headers.FirstOrDefault(header =>
-                string.Equals(
-                    NormalizeHeader(header),
-                    NormalizeHeader(columnName),
-                    StringComparison.OrdinalIgnoreCase));
-
-            if (string.IsNullOrWhiteSpace(matchingHeader))
-                return string.Empty;
-
-            return csv.GetField(matchingHeader)?.Trim() ?? string.Empty;
+            return string.IsNullOrWhiteSpace(match)
+                ? string.Empty
+                : csv.GetField(match)?.Trim() ?? string.Empty;
         }
-        catch
-        {
-            return string.Empty;
-        }
+        catch { return string.Empty; }
     }
 
     private DateTime? TryParseNullableDate(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
-            return parsedDate;
-
-        return null;
-    }
-
-    private Guid BuildStableFindingId(string? sourceRecordId)
-    {
-        if (Guid.TryParse(sourceRecordId, out var parsedId))
-            return parsedId;
-
-        // Until business confirms a stable unique inbound ID, keep internal Guid.
-        // Later we can generate deterministic IDs from source system + path + file name.
-        return Guid.NewGuid();
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
     }
 
     private long? TryParseNullableLong(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var cleanedValue = value
-            .Replace(",", string.Empty)
-            .Trim();
-
-        if (long.TryParse(cleanedValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLong))
-            return parsedLong;
-
-        if (decimal.TryParse(cleanedValue, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedDecimal))
-            return Convert.ToInt64(parsedDecimal);
-
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var cleaned = value.Replace(",", string.Empty).Trim();
+        if (long.TryParse(cleaned, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l)) return l;
+        if (decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.InvariantCulture, out var d)) return Convert.ToInt64(d);
         return null;
     }
 
     private string? NullIfWhiteSpace(string value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? null
-            : value.Trim();
-    }
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string NormalizeHeader(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        return value
-            .Trim()
-            .Replace(" ", string.Empty)
-            .Replace("_", string.Empty)
-            .Replace("-", string.Empty)
-            .ToLowerInvariant();
-    }
-
-    private void MapApprovedFieldsToExistingPocFields(FileFinding finding)
-    {
-        finding.FileName = finding.FindingFileName;
-        finding.FilePath = finding.CurrentFileLocation;
-        finding.SourceSystem = finding.OriginatingDataSystem;
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return value.Trim().Replace(" ", string.Empty).Replace("_", string.Empty).Replace("-", string.Empty).ToLowerInvariant();
     }
 
     private async Task<string> StoreProcessingSummaryAsync(IngestionUploadResponse response)
@@ -978,19 +782,15 @@ public class IngestionService : IIngestionService
             SourceSystem = response.SourceSystem,
             TriggerType = response.TriggerType,
             IngestionMode = response.IngestionMode,
-
             StartedAtUtc = response.StartedAtUtc,
             CompletedAtUtc = response.CompletedAtUtc,
-
             ProcessingStartTimeUtc = response.StartedAtUtc,
             ProcessingEndTimeUtc = response.CompletedAtUtc,
-
             PayloadRecordCount = response.PayloadRecordCount,
             TotalRowsProcessed = response.TotalRecords,
             SuccessfulRows = response.SuccessCount,
             FailedRows = response.RejectCount,
             ValidationFailureCount = response.ValidationFailureCount,
-
             BatchSize = response.BatchSize,
             TotalBatches = response.TotalBatches,
             PersistedBatchCount = response.PersistedBatchCount,
@@ -999,44 +799,34 @@ public class IngestionService : IIngestionService
             CheckpointingEnabled = response.CheckpointingEnabled,
             BatchPersistenceRetryCount = response.BatchPersistenceRetryCount,
             MaxBatchPersistenceRetryCount = response.MaxBatchPersistenceRetryCount,
-
             WorkingFileFormat = response.WorkingFileFormat,
             WorkingFilePath = response.WorkingFilePath,
             WorkingFileRecordCount = response.WorkingFileRecordCount,
-
             IsResumeEligible = response.IsResumeEligible,
             LastCheckpointUtc = response.LastCheckpointUtc,
             CheckpointMessage = response.CheckpointMessage,
-
             FinalJobStatus = response.Status,
             Message = response.Message,
             ArchivedFilePath = response.ArchivedFilePath,
             RejectedRows = response.RejectedRows
         };
 
-        var json = JsonSerializer.Serialize(
-            summary,
-            new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Converters = { new JsonStringEnumConverter() }
-            });
+        var json = JsonSerializer.Serialize(summary, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() }
+        });
 
-        var summaryKey = IngestionArchivePathBuilder.BuildProcessingSummaryPath(
-            response.JobId,
-            response.StartedAtUtc);
-
+        var summaryKey = IngestionArchivePathBuilder.BuildProcessingSummaryPath(response.JobId, response.StartedAtUtc);
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-
         await _storage.UploadAsync(summaryKey, stream);
-
         return summaryKey;
     }
 
     private void UpdateJobAudit(
-    IngestionJobAudit audit,
-    IngestionUploadResponse response,
-    string? errorMessage = null)
+     IngestionJobAudit audit,
+     IngestionUploadResponse response,
+     string? errorMessage = null)
     {
         audit.EndTimestampUtc = response.CompletedAtUtc;
         audit.SourceSystem = response.SourceSystem;
@@ -1048,165 +838,95 @@ public class IngestionService : IIngestionService
         audit.RejectCount = response.RejectCount;
         audit.ValidationFailureCount = response.ValidationFailureCount;
 
-        audit.BatchSize = response.BatchSize;
-        audit.TotalBatches = response.TotalBatches;
-        audit.PersistedBatchCount = response.PersistedBatchCount;
-        audit.LastSuccessfulBatchNumber = response.LastSuccessfulBatchNumber;
-        audit.LastProcessedRecordCount = response.LastProcessedRecordCount;
-        audit.CheckpointingEnabled = response.CheckpointingEnabled;
-        audit.BatchPersistenceRetryCount = response.BatchPersistenceRetryCount;
-        audit.MaxBatchPersistenceRetryCount = response.MaxBatchPersistenceRetryCount;
-
-        audit.IsResumeEligible = response.IsResumeEligible;
-        audit.LastCheckpointUtc = response.LastCheckpointUtc;
-        audit.CheckpointMessage = response.CheckpointMessage;
-
-        audit.Status = response.Status;
-        audit.ErrorMessage = errorMessage;
-        audit.FailureReason = errorMessage;
-        audit.ArchivedFilePath = response.ArchivedFilePath;
-        audit.ProcessingSummaryPath = response.ProcessingSummaryPath;
-
-
-        _jobAuditRepository.Update(audit);
+        // FindingType breakdown — counts of valid records per type in this job.
+        // Populates FindingTypeCounts only when we have access to the valid findings
+        // via the response's RejectedRows complement. We derive from the response
+        // SuccessCount total; however the per-type breakdown must come from the
+        // FindingTypeCounts already set on the response if available, otherwise
+        // we leave it as-is (it was already populated before this call).
+        if (response.FindingTypeCounts != null && response.FindingTypeCounts.Count > 0)
+            audit.FindingTypeCounts = response.FindingTypeCounts;
     }
 
-    private void PersistRejectedRows(
-    string jobId,
-    string inboundFileName,
-    List<RejectedRowSummary> rejectedRows)
+    private void PersistRejectedRows(string jobId, string inboundFileName, List<RejectedRowSummary> rejectedRows)
     {
-        if (rejectedRows == null || rejectedRows.Count == 0)
-            return;
+        if (rejectedRows == null || rejectedRows.Count == 0) return;
 
-        var rejectedRowDetails = rejectedRows
-            .Select(row => new RejectedRowDetail
-            {
-                RejectedRowId = string.IsNullOrWhiteSpace(row.RejectedRowId)
-                    ? Guid.NewGuid().ToString("N")
-                    : row.RejectedRowId,
+        var details = rejectedRows.Select(row => new RejectedRowDetail
+        {
+            RejectedRowId = string.IsNullOrWhiteSpace(row.RejectedRowId) ? Guid.NewGuid().ToString("N") : row.RejectedRowId,
+            JobId = jobId,
+            InboundFileName = inboundFileName,
+            SourceRecordId = row.SourceRecordId,
+            FindingFileName = row.FindingFileName,
+            FindingType = row.FindingType,
+            UserName = row.UserName,
+            RowNumber = row.RowNumber,
+            FieldName = row.FieldName,
+            RejectedValue = row.RejectedValue,
+            ErrorReason = row.ErrorReason,
+            ErrorDateUtc = row.ErrorDateUtc == default ? DateTime.UtcNow : row.ErrorDateUtc,
+            RawRowJson = row.RawRowJson
+        }).ToList();
 
-                JobId = jobId,
-                InboundFileName = inboundFileName,
-
-                SourceRecordId = row.SourceRecordId,
-                FindingFileName = row.FindingFileName,
-                FindingType = row.FindingType,
-                UserName = row.UserName,
-
-                RowNumber = row.RowNumber,
-                FieldName = row.FieldName,
-                RejectedValue = row.RejectedValue,
-                ErrorReason = row.ErrorReason,
-                ErrorDateUtc = row.ErrorDateUtc == default
-                    ? DateTime.UtcNow
-                    : row.ErrorDateUtc,
-                RawRowJson = row.RawRowJson
-            })
-            .ToList();
-
-        _rejectedRowRepository.AddRange(rejectedRowDetails);
+        _rejectedRowRepository.AddRange(details);
     }
 
     private void ValidateUploadedFile(IFormFile? file)
     {
-        var extension = file == null
-            ? string.Empty
-            : Path.GetExtension(file.FileName);
+        var extension = file == null ? string.Empty : Path.GetExtension(file.FileName);
 
-        var validationRules = new (Func<bool> IsInvalid, string ErrorMessage)[]
+        var errors = new (Func<bool> IsInvalid, string ErrorMessage)[]
         {
-        (
-            () => file == null,
-            "Uploaded file is required."
-        ),
-        (
-            () => file?.Length == 0,
-            "Uploaded file is empty."
-        ),
-        (
-            () => file?.Length > MaxUploadFileSizeBytes,
-            $"Uploaded file size exceeds the allowed limit of {MaxUploadFileSizeBytes / (1024 * 1024)} MB."
-        ),
-        (
-            () => file != null && string.IsNullOrWhiteSpace(extension),
-            "Uploaded file must have a valid file extension."
-        ),
-        (
-            () => file != null
-                  && !string.IsNullOrWhiteSpace(extension)
-                  && !AllowedUploadExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase),
-            "Unsupported file format. Only .csv and .xlsx files are allowed."
-        )
-        };
-
-        var validationErrors = validationRules
-            .Where(rule => rule.IsInvalid())
-            .Select(rule => rule.ErrorMessage)
-            .ToList();
-
-        if (validationErrors.Any())
-        {
-            throw new InvalidDataException(string.Join(" ", validationErrors));
+            (() => file == null,                                                                                        "Uploaded file is required."),
+            (() => file?.Length == 0,                                                                                  "Uploaded file is empty."),
+            (() => file?.Length > MaxUploadFileSizeBytes,                                                              $"Uploaded file size exceeds the allowed limit of {MaxUploadFileSizeBytes / (1024 * 1024)} MB."),
+            (() => file != null && string.IsNullOrWhiteSpace(extension),                                               "Uploaded file must have a valid file extension."),
+            (() => file != null && !string.IsNullOrWhiteSpace(extension) && !AllowedUploadExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase), "Unsupported file format. Only .csv and .xlsx files are allowed.")
         }
+        .Where(r => r.IsInvalid())
+        .Select(r => r.ErrorMessage)
+        .ToList();
+
+        if (errors.Any())
+            throw new InvalidDataException(string.Join(" ", errors));
     }
 
-
     private void PersistBatchWithRetry(
-    List<FileFinding> records,
-    int batchNumber,
-    int totalBatches,
-    IngestionUploadResponse response,
-    IngestionJobAudit jobAudit)
+        List<FileFinding> records, int batchNumber, int totalBatches,
+        IngestionUploadResponse response, IngestionJobAudit jobAudit)
     {
         var pipeline = new ResiliencePipelineBuilder()
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = Math.Max(0, _processingOptions.MaxBatchPersistenceRetryCount),
-                Delay = TimeSpan.FromMilliseconds(
-                    Math.Max(0, _processingOptions.BatchPersistenceRetryDelayMilliseconds)),
+                Delay = TimeSpan.FromMilliseconds(Math.Max(0, _processingOptions.BatchPersistenceRetryDelayMilliseconds)),
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-
                 ShouldHandle = new PredicateBuilder()
                     .Handle<IOException>()
                     .Handle<TimeoutException>()
                     .Handle<InvalidOperationException>(),
-
                 OnRetry = args =>
                 {
                     response.BatchPersistenceRetryCount++;
                     jobAudit.BatchPersistenceRetryCount = response.BatchPersistenceRetryCount;
-
                     if (_processingOptions.EnableBatchCheckpointing)
-                    {
                         _jobAuditRepository.Update(jobAudit);
-                    }
-
-                    _logger.LogWarning(
-                        args.Outcome.Exception,
-                        "Polly retry triggered for ingestion batch persistence. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, Attempt: {AttemptNumber}, Delay: {RetryDelay}",
-                        response.JobId,
-                        batchNumber,
-                        totalBatches,
-                        args.AttemptNumber + 1,
-                        args.RetryDelay);
-
+                    _logger.LogWarning(args.Outcome.Exception,
+                        "Polly retry triggered. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, Attempt: {AttemptNumber}, Delay: {RetryDelay}",
+                        response.JobId, batchNumber, totalBatches, args.AttemptNumber + 1, args.RetryDelay);
                     return default;
                 }
             })
             .Build();
 
-        pipeline.Execute(() =>
-        {
-            _repository.AddRange(records);
-        });
+        pipeline.Execute(() => _repository.AddRange(records));
     }
+
     private static IngestionCheckpoint BuildCheckpoint(
-     IngestionUploadResponse response,
-     IngestionJobAudit jobAudit,
-     IngestionJobStatus status,
-     string? failureReason = null)
+        IngestionUploadResponse response, IngestionJobAudit jobAudit,
+        IngestionJobStatus status, string? failureReason = null)
     {
         return new IngestionCheckpoint
         {
@@ -1226,28 +946,25 @@ public class IngestionService : IIngestionService
             BatchPersistenceRetryCount = response.BatchPersistenceRetryCount,
             Status = status,
             IsResumeEligible = status == IngestionJobStatus.Failed
-                && response.LastSuccessfulBatchNumber > 0
-                && response.LastSuccessfulBatchNumber < response.TotalBatches,
+            && response.TotalBatches > 0
+            && response.LastSuccessfulBatchNumber < response.TotalBatches,
             LastCheckpointUtc = DateTime.UtcNow,
-            FailureReason = failureReason
+            FailureReason = failureReason,
+
+            // Working file — persisted so resume can load from Parquet instead of JSON staging
+            WorkingFilePath = response.WorkingFilePath,
+            WorkingFileFormat = response.WorkingFileFormat,
+            WorkingFileRecordCount = response.WorkingFileRecordCount
         };
     }
 
     private void UpdateCheckpoint(
-    IngestionUploadResponse response,
-    IngestionJobAudit jobAudit,
-    IngestionJobStatus status,
-    string? failureReason = null)
+        IngestionUploadResponse response, IngestionJobAudit jobAudit,
+        IngestionJobStatus status, string? failureReason = null)
     {
-        if (!_processingOptions.EnableBatchCheckpointing)
-            return;
+        if (!_processingOptions.EnableBatchCheckpointing) return;
 
-        var checkpoint = BuildCheckpoint(
-            response,
-            jobAudit,
-            status,
-            failureReason);
-
+        var checkpoint = BuildCheckpoint(response, jobAudit, status, failureReason);
         _checkpointRepository.Upsert(checkpoint);
 
         response.IsResumeEligible = checkpoint.IsResumeEligible;
@@ -1270,27 +987,19 @@ public class IngestionService : IIngestionService
             SourceSystem = checkpoint.SourceSystem,
             TriggerType = "Resume",
             IngestionMode = checkpoint.IngestionMode,
-
             StartedAtUtc = DateTime.UtcNow,
             Status = IngestionJobStatus.Started,
-
-            BatchSize = checkpoint.BatchSize > 0
-                ? checkpoint.BatchSize
-                : ResolveBatchSize(),
-
+            BatchSize = checkpoint.BatchSize > 0 ? checkpoint.BatchSize : ResolveBatchSize(),
             TotalBatches = checkpoint.TotalBatches,
             PersistedBatchCount = checkpoint.PersistedBatchCount,
             LastSuccessfulBatchNumber = checkpoint.LastSuccessfulBatchNumber,
             LastProcessedRecordCount = checkpoint.LastProcessedRecordCount,
-
             SuccessCount = checkpoint.SuccessCount,
             RejectCount = checkpoint.RejectCount,
             TotalRecords = checkpoint.SuccessCount + checkpoint.RejectCount,
             PayloadRecordCount = checkpoint.SuccessCount + checkpoint.RejectCount,
-
             BatchPersistenceRetryCount = checkpoint.BatchPersistenceRetryCount,
             MaxBatchPersistenceRetryCount = _processingOptions.MaxBatchPersistenceRetryCount,
-
             CheckpointingEnabled = _processingOptions.EnableBatchCheckpointing,
             IsResumeEligible = checkpoint.IsResumeEligible,
             LastCheckpointUtc = checkpoint.LastCheckpointUtc,
@@ -1301,39 +1010,25 @@ public class IngestionService : IIngestionService
     }
 
     private void PersistRemainingFindingsInBatches(
-    List<FileFinding> remainingFindings,
-    IngestionUploadResponse response,
-    IngestionJobAudit jobAudit,
-    int batchSize,
-    int lastSuccessfulBatchNumber)
+        List<FileFinding> remainingFindings, IngestionUploadResponse response,
+        IngestionJobAudit jobAudit, int batchSize, int lastSuccessfulBatchNumber)
     {
-        if (remainingFindings.Count == 0)
-            return;
+        if (remainingFindings.Count == 0) return;
 
         var batches = remainingFindings
             .Chunk(batchSize)
-            .Select((items, index) => new
-            {
-                BatchNumber = lastSuccessfulBatchNumber + index + 1,
-                Records = items.ToList()
-            })
+            .Select((items, index) => new { BatchNumber = lastSuccessfulBatchNumber + index + 1, Records = items.ToList() })
             .ToList();
 
         foreach (var batch in batches)
         {
             try
             {
-                PersistBatchWithRetry(
-                    batch.Records,
-                    batch.BatchNumber,
-                    response.TotalBatches,
-                    response,
-                    jobAudit);
+                PersistBatchWithRetry(batch.Records, batch.BatchNumber, response.TotalBatches, response, jobAudit);
 
                 response.PersistedBatchCount++;
                 response.LastSuccessfulBatchNumber = batch.BatchNumber;
                 response.LastProcessedRecordCount += batch.Records.Count;
-
                 jobAudit.PersistedBatchCount = response.PersistedBatchCount;
                 jobAudit.LastSuccessfulBatchNumber = response.LastSuccessfulBatchNumber;
                 jobAudit.LastProcessedRecordCount = response.LastProcessedRecordCount;
@@ -1347,24 +1042,14 @@ public class IngestionService : IIngestionService
 
                 _logger.LogInformation(
                     "Resume ingestion batch persisted. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, RecordsPersisted: {RecordsPersisted}",
-                    response.JobId,
-                    batch.BatchNumber,
-                    response.TotalBatches,
-                    batch.Records.Count);
+                    response.JobId, batch.BatchNumber, response.TotalBatches, batch.Records.Count);
             }
             catch (Exception ex)
             {
-                UpdateCheckpoint(
-                    response,
-                    jobAudit,
-                    IngestionJobStatus.Failed,
-                    ex.Message);
-
+                UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message);
                 _jobAuditRepository.Update(jobAudit);
-
                 throw new InvalidOperationException(
-                    $"Resume batch persistence failed at batch {batch.BatchNumber} of {response.TotalBatches}. Last successful batch: {response.LastSuccessfulBatchNumber}.",
-                    ex);
+                    $"Resume batch persistence failed at batch {batch.BatchNumber} of {response.TotalBatches}. Last successful batch: {response.LastSuccessfulBatchNumber}.", ex);
             }
         }
     }
@@ -1372,46 +1057,15 @@ public class IngestionService : IIngestionService
     public async Task<IngestionUploadResponse> ResumeAsync(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId))
-        {
-            return new IngestionUploadResponse
-            {
-                JobId = jobId,
-                Status = IngestionJobStatus.Failed,
-                StartedAtUtc = DateTime.UtcNow,
-                CompletedAtUtc = DateTime.UtcNow,
-                Message = "JobId is required."
-            };
-        }
+            return new IngestionUploadResponse { JobId = jobId, Status = IngestionJobStatus.Failed, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "JobId is required." };
 
         var checkpoint = _checkpointRepository.GetByJobId(jobId);
 
         if (checkpoint == null)
-        {
-            return new IngestionUploadResponse
-            {
-                JobId = jobId,
-                Status = IngestionJobStatus.Failed,
-                StartedAtUtc = DateTime.UtcNow,
-                CompletedAtUtc = DateTime.UtcNow,
-                Message = "No checkpoint found for the provided JobId."
-            };
-        }
+            return new IngestionUploadResponse { JobId = jobId, Status = IngestionJobStatus.Failed, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "No checkpoint found for the provided JobId." };
 
         if (!checkpoint.IsResumeEligible)
-        {
-            return new IngestionUploadResponse
-            {
-                JobId = jobId,
-                InboundFileName = checkpoint.InboundFileName,
-                Status = checkpoint.Status,
-                StartedAtUtc = DateTime.UtcNow,
-                CompletedAtUtc = DateTime.UtcNow,
-                Message = "This ingestion job is not eligible for resume.",
-                IsResumeEligible = false,
-                LastCheckpointUtc = checkpoint.LastCheckpointUtc,
-                CheckpointMessage = checkpoint.FailureReason
-            };
-        }
+            return new IngestionUploadResponse { JobId = jobId, InboundFileName = checkpoint.InboundFileName, Status = checkpoint.Status, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "This ingestion job is not eligible for resume.", IsResumeEligible = false, LastCheckpointUtc = checkpoint.LastCheckpointUtc, CheckpointMessage = checkpoint.FailureReason };
 
         var response = BuildResumeResponseFromCheckpoint(checkpoint);
 
@@ -1422,26 +1076,21 @@ public class IngestionService : IIngestionService
             UserName = checkpoint.UserName,
             StartedBy = checkpoint.UserName,
             StartTimestampUtc = response.StartedAtUtc,
-
             SourceSystem = checkpoint.SourceSystem,
             TriggerType = "Resume",
             IngestionMode = checkpoint.IngestionMode,
-
             BatchSize = response.BatchSize,
             TotalBatches = checkpoint.TotalBatches,
             PersistedBatchCount = checkpoint.PersistedBatchCount,
             LastSuccessfulBatchNumber = checkpoint.LastSuccessfulBatchNumber,
             LastProcessedRecordCount = checkpoint.LastProcessedRecordCount,
-
             SuccessCount = checkpoint.SuccessCount,
             RejectCount = checkpoint.RejectCount,
             TotalRecords = checkpoint.SuccessCount + checkpoint.RejectCount,
             PayloadRecordCount = checkpoint.SuccessCount + checkpoint.RejectCount,
-
             BatchPersistenceRetryCount = checkpoint.BatchPersistenceRetryCount,
             MaxBatchPersistenceRetryCount = _processingOptions.MaxBatchPersistenceRetryCount,
             CheckpointingEnabled = _processingOptions.EnableBatchCheckpointing,
-
             Status = IngestionJobStatus.Started,
             IsResumeEligible = checkpoint.IsResumeEligible,
             LastCheckpointUtc = checkpoint.LastCheckpointUtc,
@@ -1450,20 +1099,13 @@ public class IngestionService : IIngestionService
 
         try
         {
-            _logger.LogInformation(
-                "Resume ingestion started. JobId: {JobId}, LastSuccessfulBatch: {LastSuccessfulBatch}, TotalBatches: {TotalBatches}",
-                jobId,
-                checkpoint.LastSuccessfulBatchNumber,
-                checkpoint.TotalBatches);
+            _logger.LogInformation("Resume ingestion started. JobId: {JobId}, LastSuccessfulBatch: {LastSuccessfulBatch}, TotalBatches: {TotalBatches}",
+                jobId, checkpoint.LastSuccessfulBatchNumber, checkpoint.TotalBatches);
 
             List<FileFinding> recordsToResume;
-
             try
             {
-                recordsToResume = await LoadRecordsForResumeAsync(
-                    jobId,
-                    checkpoint,
-                    response);
+                recordsToResume = await LoadRecordsForResumeAsync(jobId, checkpoint, response);
             }
             catch (Exception ex)
             {
@@ -1472,12 +1114,9 @@ public class IngestionService : IIngestionService
                 response.Message = ex.Message;
                 response.IsResumeEligible = false;
                 response.CheckpointMessage = "No staged records found for resume.";
-
                 UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, response.Message);
                 UpdateJobAudit(jobAudit, response, response.Message);
-
                 response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
-
                 return response;
             }
 
@@ -1488,21 +1127,13 @@ public class IngestionService : IIngestionService
                 response.IsResumeEligible = false;
                 response.Message = "No remaining records found to resume. Job appears to be already completed.";
                 response.CheckpointMessage = "Resume completed. No pending records.";
-
                 UpdateCheckpoint(response, jobAudit, response.Status);
                 UpdateJobAudit(jobAudit, response);
-
                 response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
-
                 return response;
             }
 
-            PersistRemainingFindingsInBatches(
-                recordsToResume,
-                response,
-                jobAudit,
-                response.BatchSize,
-                checkpoint.LastSuccessfulBatchNumber);
+            PersistRemainingFindingsInBatches(recordsToResume, response, jobAudit, response.BatchSize, checkpoint.LastSuccessfulBatchNumber);
 
             response.Status = IngestionJobStatus.Success;
             response.CompletedAtUtc = DateTime.UtcNow;
@@ -1510,26 +1141,33 @@ public class IngestionService : IIngestionService
             response.Message = "Ingestion resume completed successfully.";
             response.CheckpointMessage = "Resume completed successfully.";
 
+            // Clean up staging records — resume is complete, no longer needed.
+            try
+            {
+                _stagingRepository.DeleteByJobId(jobId);
+                _logger.LogInformation(
+                    "Staging records cleaned up after resume completion. JobId: {JobId}", jobId);
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogWarning(
+                    cleanupEx,
+                    "Failed to clean up staging records after resume. JobId: {JobId}.", jobId);
+            }
+
             UpdateCheckpoint(response, jobAudit, response.Status);
             UpdateJobAudit(jobAudit, response);
 
             response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
 
-            _logger.LogInformation(
-                "Resume ingestion completed. JobId: {JobId}, Status: {Status}, LastSuccessfulBatch: {LastSuccessfulBatch}",
-                jobId,
-                response.Status,
-                response.LastSuccessfulBatchNumber);
+            _logger.LogInformation("Resume ingestion completed. JobId: {JobId}, Status: {Status}, LastSuccessfulBatch: {LastSuccessfulBatch}",
+                jobId, response.Status, response.LastSuccessfulBatchNumber);
 
             return response;
         }
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Resume ingestion failed. JobId: {JobId}",
-                jobId);
-
+            _logger.LogError(ex, "Resume ingestion failed. JobId: {JobId}", jobId);
             response.Status = IngestionJobStatus.Failed;
             response.CompletedAtUtc = DateTime.UtcNow;
             response.Message = $"Resume ingestion failed: {ex.Message}";
@@ -1537,31 +1175,63 @@ public class IngestionService : IIngestionService
             response.CheckpointMessage = response.IsResumeEligible
                 ? $"Resume can continue from batch {response.LastSuccessfulBatchNumber + 1}."
                 : "Resume failed.";
-
             UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message);
             UpdateJobAudit(jobAudit, response, ex.Message);
-
-            try
-            {
-                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
-            }
-            catch (Exception summaryEx)
-            {
-                _logger.LogError(
-                    summaryEx,
-                    "Failed to store resume processing summary. JobId: {JobId}",
-                    jobId);
-            }
-
+            try { response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response); }
+            catch (Exception summaryEx) { _logger.LogError(summaryEx, "Failed to store resume processing summary. JobId: {JobId}", jobId); }
             return response;
         }
     }
 
-    private Task<List<FileFinding>> LoadRecordsForResumeAsync(
+    private async Task<List<FileFinding>> LoadRecordsForResumeAsync(
     string jobId,
     IngestionCheckpoint checkpoint,
     IngestionUploadResponse response)
     {
+        // --- Parquet path (preferred) ---
+        // Use Parquet working file when available — faster reads, smaller footprint,
+        // works correctly for both local storage and S3.
+        if (!string.IsNullOrWhiteSpace(checkpoint.WorkingFilePath))
+        {
+            _logger.LogInformation(
+                "Loading resume records from Parquet working file. JobId: {JobId}, Path: {Path}, LastProcessedRecordCount: {LastProcessedRecordCount}",
+                jobId,
+                checkpoint.WorkingFilePath,
+                checkpoint.LastProcessedRecordCount);
+
+            try
+            {
+                var parquetRecords = await _workingFileStrategy.ReadAfterAsync(
+                    checkpoint.WorkingFilePath,
+                    checkpoint.LastProcessedRecordCount);
+
+                if (parquetRecords.Count > 0)
+                {
+                    _logger.LogInformation(
+                        "Loaded {Count} records from Parquet for resume. JobId: {JobId}",
+                        parquetRecords.Count, jobId);
+
+                    return parquetRecords;
+                }
+
+                // Parquet returned zero records — fall through to JSON staging as safety net
+                _logger.LogWarning(
+                    "Parquet working file returned 0 records. Falling back to JSON staging. JobId: {JobId}",
+                    jobId);
+            }
+            catch (Exception ex)
+            {
+                // Parquet read failure must not block resume — fall back to JSON staging
+                _logger.LogWarning(
+                    ex,
+                    "Parquet read failed. Falling back to JSON staging. JobId: {JobId}, Path: {Path}",
+                    jobId,
+                    checkpoint.WorkingFilePath);
+            }
+        }
+
+        // --- JSON staging fallback ---
+        // Used when: no Parquet working file exists, Parquet read fails, or Parquet returns 0 records.
         _logger.LogInformation(
             "Loading resume records from JSON staging. JobId: {JobId}, LastProcessedRecordCount: {LastProcessedRecordCount}",
             jobId,
@@ -1572,14 +1242,10 @@ public class IngestionService : IIngestionService
         if (stagedRecordCount == 0)
         {
             throw new InvalidOperationException(
-                "Resume failed. No staged records were found for this JobId. Re-upload may be required.");
+                "Resume failed. No staged records were found for this JobId, and no Parquet working file is available. Re-upload may be required.");
         }
 
-        var recordsToResume = _stagingRepository.GetValidFindingsAfter(
-            jobId,
-            checkpoint.LastProcessedRecordCount);
-
-        return Task.FromResult(recordsToResume);
+        return _stagingRepository.GetValidFindingsAfter(jobId, checkpoint.LastProcessedRecordCount);
     }
+
 }
-    

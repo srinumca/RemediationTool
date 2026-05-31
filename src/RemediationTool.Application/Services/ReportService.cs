@@ -1,7 +1,6 @@
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Repositories;
-using RemediationTool.Domain;
-using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
@@ -14,66 +13,52 @@ public class ReportService
         _repository = repository;
     }
 
-    // Get all
-    public List<FileReportDto> GetAll()
+    public IReadOnlyList<FileReportDto> GetByFindingType(FindingType findingType)
     {
-        try
-        {
-            return _repository.GetAll()
-                .Select(x => new FileReportDto
-                {
-                    FileName = x.FileName,
-                    Status = x.Status,
-                    LastModifiedDate = x.LastModifiedDate,
-                    QuarantinePath = x.QuarantinePath
-                })
-                .ToList();
-        }
-        catch
-        {
-            throw;
-        }
-    }
-
-    // Filter by status
-    public List<FileReportDto> GetByStatus(string status)
-    {
-        // 🔥 Convert string → enum
-        if (!Enum.TryParse<FileStatus>(status, true, out var parsedStatus))
-        {
-            return new List<FileReportDto>();
-        }
-
-        return _repository.GetAll()
-            .Where(x => x.Status == parsedStatus)
+        return _repository
+            .GetLatestByFindingType(findingType)
             .Select(x => new FileReportDto
             {
-                FileName = x.FileName,
-                Status = x.Status,
+                FindingFileName = x.FindingFileName,
+                FindingType = x.FindingType,
+                CurrentFileLocation = x.CurrentFileLocation,
+                OriginalFileLocation = x.OriginalFileLocation,
+                LastModifiedDateUtc = x.LastModifiedDateUtc,
+                QuarantineDateUtc = x.QuarantineDateUtc,
+                RestorationDateUtc = x.RestorationDateUtc,
+                DeletionDateUtc = x.DeletionDateUtc,
+                DataSystem = x.DataSystem,
+                SiteOwner = x.SiteOwner,
+                FileOwner = x.FileOwner,
+                ErrorCategory = x.ErrorCategory
             })
             .ToList();
     }
 
-    // Summary
-    public object GetSummary()
+    public IReadOnlyDictionary<FindingType, int> GetSummaryByFindingType()
     {
-        try
-        {
-            var data = _repository.GetAll();
-
-            return new
-            {
-                Total = data.Count,
-                Loaded = data.Count(x => x.Status == FileStatus.Loaded),
-                Quarantined = data.Count(x => x.Status == FileStatus.Quarantined),
-                Restored = data.Count(x => x.Status == FileStatus.Restored)
-            };
-        }
-        catch
-        {
-            throw;
-        }
+        return _repository.GetCountByFindingType();
     }
 
-    
+    public IReadOnlyList<FileReportDto> GetHistoryBySourceRecordId(string sourceRecordId)
+    {
+        return _repository
+            .GetHistoryBySourceRecordId(sourceRecordId)
+            .Select(x => new FileReportDto
+            {
+                FindingFileName = x.FindingFileName,
+                FindingType = x.FindingType,
+                CurrentFileLocation = x.CurrentFileLocation,
+                OriginalFileLocation = x.OriginalFileLocation,
+                LastModifiedDateUtc = x.LastModifiedDateUtc,
+                QuarantineDateUtc = x.QuarantineDateUtc,
+                RestorationDateUtc = x.RestorationDateUtc,
+                DeletionDateUtc = x.DeletionDateUtc,
+                DataSystem = x.DataSystem,
+                SiteOwner = x.SiteOwner,
+                FileOwner = x.FileOwner,
+                ErrorCategory = x.ErrorCategory
+            })
+            .ToList();
+    }
 }

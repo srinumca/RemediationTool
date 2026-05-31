@@ -65,4 +65,6 @@ public class IngestionUploadResponse
     public string? WorkingFilePath { get; set; }
 
     public int WorkingFileRecordCount { get; set; }
+    // Count of successfully ingested records grouped by FindingType (Req 7 audit report).
+    public Dictionary<string, int> FindingTypeCounts { get; set; } = new();
 }

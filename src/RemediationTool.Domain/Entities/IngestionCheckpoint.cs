@@ -41,4 +41,13 @@ public class IngestionCheckpoint
     public DateTime LastCheckpointUtc { get; set; } = DateTime.UtcNow;
 
     public string? FailureReason { get; set; }
+
+    // --- Working file (Parquet) ---
+    // Populated after WriteAsync completes. Used by resume to load records
+    // from Parquet instead of JSON staging when a working file exists.
+    public string? WorkingFilePath { get; set; }
+
+    public string? WorkingFileFormat { get; set; }
+
+    public int WorkingFileRecordCount { get; set; }
 }

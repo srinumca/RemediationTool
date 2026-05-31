@@ -1,10 +1,9 @@
 ﻿using Parquet;
 using Parquet.Schema;
-using Parquet.File;
-using Parquet.Data;
 using RemediationTool.Application.Constants;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Infrastructure.Strategies;
 
@@ -20,10 +19,10 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
     public string Format => "Parquet";
 
     public async Task<IngestionWorkingFileResult> WriteAsync(
-    string jobId,
-    string inboundFileName,
-    IReadOnlyList<FileFinding> validFindings,
-    CancellationToken cancellationToken = default)
+        string jobId,
+        string inboundFileName,
+        IReadOnlyList<FileFinding> validFindings,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             throw new ArgumentException("JobId is required.", nameof(jobId));
@@ -36,88 +35,7 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             inboundFileName,
             DateTime.UtcNow);
 
-        var idField = new DataField<string>("Id");
-        var recordVersionIdField = new DataField<string>("RecordVersionId");
-        var sourceRecordIdField = new DataField<string>("SourceRecordId");
-        var ingestionJobIdField = new DataField<string>("IngestionJobId");
-        var inboundFileNameField = new DataField<string>("InboundFileName");
-        var userNameField = new DataField<string>("UserName");
-
-        var loadDateUtcField = new DataField<DateTime>("LoadDateUtc");
-        var lastUpdateDateUtcField = new DataField<DateTime>("LastUpdateDateUtc");
-
-        var findingFileNameField = new DataField<string>("FindingFileName");
-        var findingFileFormatField = new DataField<string>("FindingFileFormat");
-        var findingFileSizeBytesField = new DataField<long>("FindingFileSizeBytes");
-        var currentFileLocationField = new DataField<string>("CurrentFileLocation");
-        var findingTypeField = new DataField<string>("FindingType");
-        var originatingDataSystemField = new DataField<string>("OriginatingDataSystem");
-        var originatingVendorToolField = new DataField<string>("OriginatingVendorTool");
-
-        var lastModifiedDateUtcField = new DataField<DateTime>("LastModifiedDateUtc");
-        var createdDateUtcField = new DataField<DateTime>("CreatedDateUtc");
-        var lastAccessedDateUtcField = new DataField<DateTime>("LastAccessedDateUtc");
-
-        var siteOwnerField = new DataField<string>("SiteOwner");
-        var fileOwnerField = new DataField<string>("FileOwner");
-        var businessUnitField = new DataField<string>("BusinessUnit");
-        var divisionField = new DataField<string>("Division");
-        var departmentField = new DataField<string>("Department");
-        var regionField = new DataField<string>("Region");
-        var countryField = new DataField<string>("Country");
-
-        var policyNameField = new DataField<string>("PolicyName");
-        var policyIdField = new DataField<string>("PolicyId");
-        var findingReasonField = new DataField<string>("FindingReason");
-        var riskLevelField = new DataField<string>("RiskLevel");
-        var sensitivityLabelField = new DataField<string>("SensitivityLabel");
-        var detectionDateUtcField = new DataField<DateTime>("DetectionDateUtc");
-        var recommendedActionField = new DataField<string>("RecommendedAction");
-
-        var originalFileLocationField = new DataField<string>("OriginalFileLocation");
-        var quarantineDateUtcField = new DataField<DateTime>("QuarantineDateUtc");
-        var restorationTicketIdentifierField = new DataField<string>("RestorationTicketIdentifier");
-        var restorationRequestorEmailField = new DataField<string>("RestorationRequestorEmail");
-        var restorationCommentField = new DataField<string>("RestorationComment");
-
-        var schema = new ParquetSchema(
-            idField,
-            recordVersionIdField,
-            sourceRecordIdField,
-            ingestionJobIdField,
-            inboundFileNameField,
-            userNameField,
-            loadDateUtcField,
-            lastUpdateDateUtcField,
-            findingFileNameField,
-            findingFileFormatField,
-            findingFileSizeBytesField,
-            currentFileLocationField,
-            findingTypeField,
-            originatingDataSystemField,
-            originatingVendorToolField,
-            lastModifiedDateUtcField,
-            createdDateUtcField,
-            lastAccessedDateUtcField,
-            siteOwnerField,
-            fileOwnerField,
-            businessUnitField,
-            divisionField,
-            departmentField,
-            regionField,
-            countryField,
-            policyNameField,
-            policyIdField,
-            findingReasonField,
-            riskLevelField,
-            sensitivityLabelField,
-            detectionDateUtcField,
-            recommendedActionField,
-            originalFileLocationField,
-            quarantineDateUtcField,
-            restorationTicketIdentifierField,
-            restorationRequestorEmailField,
-            restorationCommentField);
+        var schema = BuildSchema();
 
         await using var parquetStream = new MemoryStream();
 
@@ -126,51 +44,56 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             parquetStream,
             cancellationToken: cancellationToken))
         {
-            using var rowGroupWriter = writer.CreateRowGroup();
+            using var rg = writer.CreateRowGroup();
 
-            await rowGroupWriter.WriteAsync(idField, validFindings.Select(x => x.Id.ToString()).ToArray());
-            await rowGroupWriter.WriteAsync(recordVersionIdField, validFindings.Select(x => NullToEmpty(x.RecordVersionId)).ToArray());
-            await rowGroupWriter.WriteAsync(sourceRecordIdField, validFindings.Select(x => NullToEmpty(x.SourceRecordId)).ToArray());
-            await rowGroupWriter.WriteAsync(ingestionJobIdField, validFindings.Select(x => NullToEmpty(x.IngestionJobId)).ToArray());
-            await rowGroupWriter.WriteAsync(inboundFileNameField, validFindings.Select(x => NullToEmpty(x.InboundFileName)).ToArray());
-            await rowGroupWriter.WriteAsync(userNameField, validFindings.Select(x => NullToEmpty(x.UserName)).ToArray());
+            await rg.WriteAsync(GetField(schema, "Id"), validFindings.Select(x => x.Id.ToString()).ToArray());
+            await rg.WriteAsync(GetField(schema, "RecordVersionId"), validFindings.Select(x => NullToEmpty(x.RecordVersionId)).ToArray());
+            await rg.WriteAsync(GetField(schema, "SourceRecordId"), validFindings.Select(x => NullToEmpty(x.SourceRecordId)).ToArray());
+            await rg.WriteAsync(GetField(schema, "IngestionJobId"), validFindings.Select(x => NullToEmpty(x.IngestionJobId)).ToArray());
+            await rg.WriteAsync(GetField(schema, "InboundFileName"), validFindings.Select(x => NullToEmpty(x.InboundFileName)).ToArray());
+            await rg.WriteAsync(GetField(schema, "UserName"), validFindings.Select(x => NullToEmpty(x.UserName)).ToArray());
 
-            await rowGroupWriter.WriteAsync<DateTime>(loadDateUtcField, validFindings.Select(x => x.LoadDateUtc).ToArray());
-            await rowGroupWriter.WriteAsync<DateTime>(lastUpdateDateUtcField, validFindings.Select(x => x.LastUpdateDateUtc).ToArray());
+            await rg.WriteAsync<DateTime>(GetField(schema, "LoadDateUtc"), validFindings.Select(x => x.LoadDateUtc).ToArray());
+            await rg.WriteAsync<DateTime>(GetField(schema, "LastUpdateDateUtc"), validFindings.Select(x => x.LastUpdateDateUtc).ToArray());
 
-            await rowGroupWriter.WriteAsync(findingFileNameField, validFindings.Select(x => NullToEmpty(x.FindingFileName)).ToArray());
-            await rowGroupWriter.WriteAsync(findingFileFormatField, validFindings.Select(x => NullToEmpty(x.FindingFileFormat)).ToArray());
-            await rowGroupWriter.WriteAsync<long>(findingFileSizeBytesField, validFindings.Select(x => x.FindingFileSizeBytes ?? 0L).ToArray());
-            await rowGroupWriter.WriteAsync(currentFileLocationField, validFindings.Select(x => NullToEmpty(x.CurrentFileLocation)).ToArray());
-            await rowGroupWriter.WriteAsync(findingTypeField, validFindings.Select(x => NullToEmpty(x.FindingType)).ToArray());
-            await rowGroupWriter.WriteAsync(originatingDataSystemField, validFindings.Select(x => NullToEmpty(x.OriginatingDataSystem)).ToArray());
-            await rowGroupWriter.WriteAsync(originatingVendorToolField, validFindings.Select(x => NullToEmpty(x.OriginatingVendorTool)).ToArray());
+            await rg.WriteAsync(GetField(schema, "FindingFileName"), validFindings.Select(x => NullToEmpty(x.FindingFileName)).ToArray());
+            await rg.WriteAsync(GetField(schema, "FindingFileFormat"), validFindings.Select(x => NullToEmpty(x.FindingFileFormat)).ToArray());
 
-            await rowGroupWriter.WriteAsync<DateTime>(lastModifiedDateUtcField, validFindings.Select(x => x.LastModifiedDateUtc ?? DateTime.MinValue).ToArray());
-            await rowGroupWriter.WriteAsync<DateTime>(createdDateUtcField, validFindings.Select(x => x.CreatedDateUtc ?? DateTime.MinValue).ToArray());
-            await rowGroupWriter.WriteAsync<DateTime>(lastAccessedDateUtcField, validFindings.Select(x => x.LastAccessedDateUtc ?? DateTime.MinValue).ToArray());
+            await rg.WriteAsync<long>(GetField(schema, "FindingFileSizeBytes"), validFindings.Select(x => x.FindingFileSizeBytes ?? 0L).ToArray());
 
-            await rowGroupWriter.WriteAsync(siteOwnerField, validFindings.Select(x => NullToEmpty(x.SiteOwner)).ToArray());
-            await rowGroupWriter.WriteAsync(fileOwnerField, validFindings.Select(x => NullToEmpty(x.FileOwner)).ToArray());
-            await rowGroupWriter.WriteAsync(businessUnitField, validFindings.Select(x => NullToEmpty(x.BusinessUnit)).ToArray());
-            await rowGroupWriter.WriteAsync(divisionField, validFindings.Select(x => NullToEmpty(x.Division)).ToArray());
-            await rowGroupWriter.WriteAsync(departmentField, validFindings.Select(x => NullToEmpty(x.Department)).ToArray());
-            await rowGroupWriter.WriteAsync(regionField, validFindings.Select(x => NullToEmpty(x.Region)).ToArray());
-            await rowGroupWriter.WriteAsync(countryField, validFindings.Select(x => NullToEmpty(x.Country)).ToArray());
+            await rg.WriteAsync(GetField(schema, "CurrentFileLocation"), validFindings.Select(x => NullToEmpty(x.CurrentFileLocation)).ToArray());
+            await rg.WriteAsync(GetField(schema, "FindingType"), validFindings.Select(x => x.FindingType.ToString()).ToArray());
+            await rg.WriteAsync(GetField(schema, "OriginatingDataSystem"), validFindings.Select(x => NullToEmpty(x.OriginatingDataSystem)).ToArray());
+            await rg.WriteAsync(GetField(schema, "OriginatingVendorTool"), validFindings.Select(x => NullToEmpty(x.OriginatingVendorTool)).ToArray());
 
-            await rowGroupWriter.WriteAsync(policyNameField, validFindings.Select(x => NullToEmpty(x.PolicyName)).ToArray());
-            await rowGroupWriter.WriteAsync(policyIdField, validFindings.Select(x => NullToEmpty(x.PolicyId)).ToArray());
-            await rowGroupWriter.WriteAsync(findingReasonField, validFindings.Select(x => NullToEmpty(x.FindingReason)).ToArray());
-            await rowGroupWriter.WriteAsync(riskLevelField, validFindings.Select(x => NullToEmpty(x.RiskLevel)).ToArray());
-            await rowGroupWriter.WriteAsync(sensitivityLabelField, validFindings.Select(x => NullToEmpty(x.SensitivityLabel)).ToArray());
-            await rowGroupWriter.WriteAsync<DateTime>(detectionDateUtcField, validFindings.Select(x => x.DetectionDateUtc ?? DateTime.MinValue).ToArray());
-            await rowGroupWriter.WriteAsync(recommendedActionField, validFindings.Select(x => NullToEmpty(x.RecommendedAction)).ToArray());
+            await rg.WriteAsync<DateTime>(GetField(schema, "LastModifiedDateUtc"), validFindings.Select(x => x.LastModifiedDateUtc ?? DateTime.MinValue).ToArray());
+            await rg.WriteAsync<DateTime>(GetField(schema, "CreatedDateUtc"), validFindings.Select(x => x.CreatedDateUtc ?? DateTime.MinValue).ToArray());
+            await rg.WriteAsync<DateTime>(GetField(schema, "LastAccessedDateUtc"), validFindings.Select(x => x.LastAccessedDateUtc ?? DateTime.MinValue).ToArray());
 
-            await rowGroupWriter.WriteAsync(originalFileLocationField, validFindings.Select(x => NullToEmpty(x.OriginalFileLocation)).ToArray());
-            await rowGroupWriter.WriteAsync<DateTime>(quarantineDateUtcField, validFindings.Select(x => x.QuarantineDateUtc ?? DateTime.MinValue).ToArray());
-            await rowGroupWriter.WriteAsync(restorationTicketIdentifierField, validFindings.Select(x => NullToEmpty(x.RestorationTicketIdentifier)).ToArray());
-            await rowGroupWriter.WriteAsync(restorationRequestorEmailField, validFindings.Select(x => NullToEmpty(x.RestorationRequestorEmail)).ToArray());
-            await rowGroupWriter.WriteAsync(restorationCommentField, validFindings.Select(x => NullToEmpty(x.RestorationComment)).ToArray());
+            await rg.WriteAsync(GetField(schema, "SiteOwner"), validFindings.Select(x => NullToEmpty(x.SiteOwner)).ToArray());
+            await rg.WriteAsync(GetField(schema, "FileOwner"), validFindings.Select(x => NullToEmpty(x.FileOwner)).ToArray());
+            await rg.WriteAsync(GetField(schema, "BusinessUnit"), validFindings.Select(x => NullToEmpty(x.BusinessUnit)).ToArray());
+            await rg.WriteAsync(GetField(schema, "Division"), validFindings.Select(x => NullToEmpty(x.Division)).ToArray());
+            await rg.WriteAsync(GetField(schema, "Department"), validFindings.Select(x => NullToEmpty(x.Department)).ToArray());
+            await rg.WriteAsync(GetField(schema, "Region"), validFindings.Select(x => NullToEmpty(x.Region)).ToArray());
+            await rg.WriteAsync(GetField(schema, "Country"), validFindings.Select(x => NullToEmpty(x.Country)).ToArray());
+            await rg.WriteAsync(GetField(schema, "PolicyName"), validFindings.Select(x => NullToEmpty(x.PolicyName)).ToArray());
+            await rg.WriteAsync(GetField(schema, "PolicyId"), validFindings.Select(x => NullToEmpty(x.PolicyId)).ToArray());
+            await rg.WriteAsync(GetField(schema, "FindingReason"), validFindings.Select(x => NullToEmpty(x.FindingReason)).ToArray());
+            await rg.WriteAsync(GetField(schema, "RiskLevel"), validFindings.Select(x => NullToEmpty(x.RiskLevel)).ToArray());
+            await rg.WriteAsync(GetField(schema, "SensitivityLabel"), validFindings.Select(x => NullToEmpty(x.SensitivityLabel)).ToArray());
+
+            await rg.WriteAsync<DateTime>(GetField(schema, "DetectionDateUtc"), validFindings.Select(x => x.DetectionDateUtc ?? DateTime.MinValue).ToArray());
+
+            await rg.WriteAsync(GetField(schema, "RecommendedAction"), validFindings.Select(x => NullToEmpty(x.RecommendedAction)).ToArray());
+            await rg.WriteAsync(GetField(schema, "OriginalFileLocation"), validFindings.Select(x => NullToEmpty(x.OriginalFileLocation)).ToArray());
+
+            await rg.WriteAsync<DateTime>(GetField(schema, "QuarantineDateUtc"), validFindings.Select(x => x.QuarantineDateUtc ?? DateTime.MinValue).ToArray());
+
+            await rg.WriteAsync(GetField(schema, "RestorationTicketIdentifier"), validFindings.Select(x => NullToEmpty(x.RestorationTicketIdentifier)).ToArray());
+            await rg.WriteAsync(GetField(schema, "RestorationRequestorEmail"), validFindings.Select(x => NullToEmpty(x.RestorationRequestorEmail)).ToArray());
+            await rg.WriteAsync(GetField(schema, "RestorationComment"), validFindings.Select(x => NullToEmpty(x.RestorationComment)).ToArray());
+            await rg.WriteAsync(GetField(schema, "DataSystem"), validFindings.Select(x => NullToEmpty(x.DataSystem)).ToArray());
         }
 
         parquetStream.Position = 0;
@@ -184,6 +107,236 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             RecordCount = validFindings.Count
         };
     }
+
+    public async Task<List<FileFinding>> ReadAfterAsync(
+        string workingFilePath,
+        int lastProcessedRecordCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(workingFilePath))
+            throw new ArgumentException("Working file path is required.", nameof(workingFilePath));
+
+        var stream = await _storage.DownloadAsync(workingFilePath);
+
+        await using var reader = await ParquetReader.CreateAsync(
+            stream,
+            cancellationToken: cancellationToken);
+
+        var dataFields = reader.Schema.GetDataFields();
+
+        var fieldMap = dataFields.ToDictionary(
+            f => f.Name,
+            f => f,
+            StringComparer.OrdinalIgnoreCase);
+
+        var allFindings = new List<FileFinding>();
+
+        for (var groupIndex = 0; groupIndex < reader.RowGroupCount; groupIndex++)
+        {
+            using var rg = reader.OpenRowGroupReader(groupIndex);
+
+            var rowCount = checked((int)rg.RowCount);
+
+            async Task<string[]> ReadStringAsync(string name)
+            {
+                var values = new string[rowCount];
+                await rg.ReadAsync(GetField(fieldMap, name), values);
+                return values;
+            }
+
+            async Task<DateTime[]> ReadDateTimeAsync(string name)
+            {
+                var values = new DateTime[rowCount];
+                await rg.ReadAsync<DateTime>(GetField(fieldMap, name), values);
+                return values;
+            }
+
+            async Task<long[]> ReadLongAsync(string name)
+            {
+                var values = new long[rowCount];
+                await rg.ReadAsync<long>(GetField(fieldMap, name), values);
+                return values;
+            }
+
+            var ids = await ReadStringAsync("Id");
+            var recordVersionIds = await ReadStringAsync("RecordVersionId");
+            var sourceRecordIds = await ReadStringAsync("SourceRecordId");
+            var ingestionJobIds = await ReadStringAsync("IngestionJobId");
+            var inboundFileNames = await ReadStringAsync("InboundFileName");
+            var userNames = await ReadStringAsync("UserName");
+
+            var loadDates = await ReadDateTimeAsync("LoadDateUtc");
+            var lastUpdateDates = await ReadDateTimeAsync("LastUpdateDateUtc");
+
+            var findingFileNames = await ReadStringAsync("FindingFileName");
+            var findingFileFormats = await ReadStringAsync("FindingFileFormat");
+            var findingFileSizes = await ReadLongAsync("FindingFileSizeBytes");
+            var currentFileLocations = await ReadStringAsync("CurrentFileLocation");
+            var findingTypes = await ReadStringAsync("FindingType");
+            var originatingDataSystems = await ReadStringAsync("OriginatingDataSystem");
+            var originatingVendorTools = await ReadStringAsync("OriginatingVendorTool");
+
+            var lastModifiedDates = await ReadDateTimeAsync("LastModifiedDateUtc");
+            var createdDates = await ReadDateTimeAsync("CreatedDateUtc");
+            var lastAccessedDates = await ReadDateTimeAsync("LastAccessedDateUtc");
+
+            var siteOwners = await ReadStringAsync("SiteOwner");
+            var fileOwners = await ReadStringAsync("FileOwner");
+            var businessUnits = await ReadStringAsync("BusinessUnit");
+            var divisions = await ReadStringAsync("Division");
+            var departments = await ReadStringAsync("Department");
+            var regions = await ReadStringAsync("Region");
+            var countries = await ReadStringAsync("Country");
+            var policyNames = await ReadStringAsync("PolicyName");
+            var policyIds = await ReadStringAsync("PolicyId");
+            var findingReasons = await ReadStringAsync("FindingReason");
+            var riskLevels = await ReadStringAsync("RiskLevel");
+            var sensitivityLabels = await ReadStringAsync("SensitivityLabel");
+
+            var detectionDates = await ReadDateTimeAsync("DetectionDateUtc");
+
+            var recommendedActions = await ReadStringAsync("RecommendedAction");
+            var originalFileLocations = await ReadStringAsync("OriginalFileLocation");
+
+            var quarantineDates = await ReadDateTimeAsync("QuarantineDateUtc");
+
+            var restorationTicketIdentifiers = await ReadStringAsync("RestorationTicketIdentifier");
+            var restorationRequestorEmails = await ReadStringAsync("RestorationRequestorEmail");
+            var restorationComments = await ReadStringAsync("RestorationComment");
+            var dataSystems = await ReadStringAsync("DataSystem");
+
+            for (var i = 0; i < rowCount; i++)
+            {
+                Enum.TryParse<FindingType>(
+                    findingTypes[i],
+                    ignoreCase: true,
+                    out var parsedFindingType);
+
+                allFindings.Add(new FileFinding
+                {
+                    Id = Guid.TryParse(ids[i], out var parsedId) ? parsedId : Guid.NewGuid(),
+
+                    RecordVersionId = NullIfEmpty(recordVersionIds[i]),
+                    SourceRecordId = NullIfEmpty(sourceRecordIds[i]),
+                    IngestionJobId = NullIfEmpty(ingestionJobIds[i]),
+                    InboundFileName = NullIfEmpty(inboundFileNames[i]),
+                    UserName = NullIfEmpty(userNames[i]),
+
+                    LoadDateUtc = loadDates[i],
+                    LastUpdateDateUtc = lastUpdateDates[i],
+
+                    FindingFileName = NullIfEmpty(findingFileNames[i]) ?? string.Empty,
+                    FindingFileFormat = NullIfEmpty(findingFileFormats[i]),
+                    FindingFileSizeBytes = findingFileSizes[i] == 0L ? null : findingFileSizes[i],
+                    CurrentFileLocation = NullIfEmpty(currentFileLocations[i]),
+
+                    FindingType = parsedFindingType,
+
+                    OriginatingDataSystem = NullIfEmpty(originatingDataSystems[i]),
+                    OriginatingVendorTool = NullIfEmpty(originatingVendorTools[i]),
+
+                    LastModifiedDateUtc = ToNullableDate(lastModifiedDates[i]),
+                    CreatedDateUtc = ToNullableDate(createdDates[i]),
+                    LastAccessedDateUtc = ToNullableDate(lastAccessedDates[i]),
+
+                    SiteOwner = NullIfEmpty(siteOwners[i]),
+                    FileOwner = NullIfEmpty(fileOwners[i]),
+                    BusinessUnit = NullIfEmpty(businessUnits[i]),
+                    Division = NullIfEmpty(divisions[i]),
+                    Department = NullIfEmpty(departments[i]),
+                    Region = NullIfEmpty(regions[i]),
+                    Country = NullIfEmpty(countries[i]),
+                    PolicyName = NullIfEmpty(policyNames[i]),
+                    PolicyId = NullIfEmpty(policyIds[i]),
+                    FindingReason = NullIfEmpty(findingReasons[i]),
+                    RiskLevel = NullIfEmpty(riskLevels[i]),
+                    SensitivityLabel = NullIfEmpty(sensitivityLabels[i]),
+
+                    DetectionDateUtc = ToNullableDate(detectionDates[i]),
+
+                    RecommendedAction = NullIfEmpty(recommendedActions[i]),
+                    OriginalFileLocation = NullIfEmpty(originalFileLocations[i]),
+
+                    QuarantineDateUtc = ToNullableDate(quarantineDates[i]),
+
+                    RestorationTicketIdentifier = NullIfEmpty(restorationTicketIdentifiers[i]),
+                    RestorationRequestorEmail = NullIfEmpty(restorationRequestorEmails[i]),
+                    RestorationComment = NullIfEmpty(restorationComments[i]),
+
+                    DataSystem = NullIfEmpty(dataSystems[i]) ?? string.Empty
+                });
+            }
+        }
+
+        return lastProcessedRecordCount <= 0
+            ? allFindings
+            : allFindings.Skip(lastProcessedRecordCount).ToList();
+    }
+
+    private static ParquetSchema BuildSchema() => new(
+        new DataField<string>("Id"),
+        new DataField<string>("RecordVersionId"),
+        new DataField<string>("SourceRecordId"),
+        new DataField<string>("IngestionJobId"),
+        new DataField<string>("InboundFileName"),
+        new DataField<string>("UserName"),
+
+        new DataField<DateTime>("LoadDateUtc"),
+        new DataField<DateTime>("LastUpdateDateUtc"),
+
+        new DataField<string>("FindingFileName"),
+        new DataField<string>("FindingFileFormat"),
+        new DataField<long>("FindingFileSizeBytes"),
+        new DataField<string>("CurrentFileLocation"),
+        new DataField<string>("FindingType"),
+        new DataField<string>("OriginatingDataSystem"),
+        new DataField<string>("OriginatingVendorTool"),
+
+        new DataField<DateTime>("LastModifiedDateUtc"),
+        new DataField<DateTime>("CreatedDateUtc"),
+        new DataField<DateTime>("LastAccessedDateUtc"),
+
+        new DataField<string>("SiteOwner"),
+        new DataField<string>("FileOwner"),
+        new DataField<string>("BusinessUnit"),
+        new DataField<string>("Division"),
+        new DataField<string>("Department"),
+        new DataField<string>("Region"),
+        new DataField<string>("Country"),
+        new DataField<string>("PolicyName"),
+        new DataField<string>("PolicyId"),
+        new DataField<string>("FindingReason"),
+        new DataField<string>("RiskLevel"),
+        new DataField<string>("SensitivityLabel"),
+
+        new DataField<DateTime>("DetectionDateUtc"),
+
+        new DataField<string>("RecommendedAction"),
+        new DataField<string>("OriginalFileLocation"),
+
+        new DataField<DateTime>("QuarantineDateUtc"),
+
+        new DataField<string>("RestorationTicketIdentifier"),
+        new DataField<string>("RestorationRequestorEmail"),
+        new DataField<string>("RestorationComment"),
+        new DataField<string>("DataSystem"));
+
+    private static DataField GetField(ParquetSchema schema, string name)
+    {
+        return schema.GetDataFields()
+            .First(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static DataField GetField(Dictionary<string, DataField> fieldMap, string name)
+    {
+        if (fieldMap.TryGetValue(name, out var field))
+            return field;
+
+        throw new InvalidOperationException(
+            $"Parquet schema is missing expected field '{name}'. " +
+            "The working file may have been written by an older schema version.");
+    }
+
     private static string NullToEmpty(string? value)
     {
         return string.IsNullOrWhiteSpace(value)
@@ -191,12 +344,17 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             : value.Trim();
     }
 
-    public Task<List<FileFinding>> ReadAfterAsync(
-    string workingFilePath,
-    int lastProcessedRecordCount,
-    CancellationToken cancellationToken = default)
+    private static string? NullIfEmpty(string? value)
     {
-        throw new NotSupportedException(
-            "Parquet read support is not enabled for the currently installed Parquet.Net API version. Resume will fall back to JSON staging.");
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim();
+    }
+
+    private static DateTime? ToNullableDate(DateTime value)
+    {
+        return value == DateTime.MinValue
+            ? null
+            : value;
     }
 }

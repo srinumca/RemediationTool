@@ -8,6 +8,7 @@ namespace RemediationTool.Infrastructure.Repositories;
 public class JsonIngestionStagingRepository : IIngestionStagingRepository
 {
     private readonly string _filePath;
+    private readonly object _lock = new();
     private readonly JsonSerializerOptions _jsonOptions;
 
     public JsonIngestionStagingRepository()
@@ -32,24 +33,27 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         if (validFindings == null || validFindings.Count == 0)
             return;
 
-        var stagedFindings = LoadAll();
+        lock (_lock)
+        {
+            var stagedFindings = LoadAll();
 
-        stagedFindings.RemoveAll(existing =>
-            string.Equals(existing.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+            // Replace any existing staged records for this jobId (idempotent on re-upload)
+            stagedFindings.RemoveAll(existing =>
+                string.Equals(existing.JobId, jobId, StringComparison.OrdinalIgnoreCase));
 
-        var newRecords = validFindings
-            .Select((finding, index) => new IngestionStagedFinding
-            {
-                JobId = jobId,
-                SequenceNumber = index + 1,
-                Finding = finding,
-                CreatedAtUtc = DateTime.UtcNow
-            })
-            .ToList();
+            var newRecords = validFindings
+                .Select((finding, index) => new IngestionStagedFinding
+                {
+                    JobId = jobId,
+                    SequenceNumber = index + 1,
+                    Finding = finding,
+                    CreatedAtUtc = DateTime.UtcNow
+                })
+                .ToList();
 
-        stagedFindings.AddRange(newRecords);
-
-        SaveAll(stagedFindings);
+            stagedFindings.AddRange(newRecords);
+            SaveAll(stagedFindings);
+        }
     }
 
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
@@ -57,13 +61,16 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         if (string.IsNullOrWhiteSpace(jobId))
             return new List<FileFinding>();
 
-        return LoadAll()
-            .Where(record =>
-                string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase)
-                && record.SequenceNumber > lastProcessedRecordCount)
-            .OrderBy(record => record.SequenceNumber)
-            .Select(record => record.Finding)
-            .ToList();
+        lock (_lock)
+        {
+            return LoadAll()
+                .Where(record =>
+                    string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase)
+                    && record.SequenceNumber > lastProcessedRecordCount)
+                .OrderBy(record => record.SequenceNumber)
+                .Select(record => record.Finding)
+                .ToList();
+        }
     }
 
     public int CountByJobId(string jobId)
@@ -71,9 +78,32 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         if (string.IsNullOrWhiteSpace(jobId))
             return 0;
 
-        return LoadAll()
-            .Count(record =>
+        lock (_lock)
+        {
+            return LoadAll()
+                .Count(record =>
+                    string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// Removes all staged records for the given JobId.
+    /// Called after successful job completion to prevent unbounded file growth.
+    /// </summary>
+    public void DeleteByJobId(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return;
+
+        lock (_lock)
+        {
+            var stagedFindings = LoadAll();
+            var removed = stagedFindings.RemoveAll(record =>
                 string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+
+            if (removed > 0)
+                SaveAll(stagedFindings);
+        }
     }
 
     private List<IngestionStagedFinding> LoadAll()

@@ -1,8 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Application.Services;
-
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.API.Controllers;
 
@@ -10,60 +9,64 @@ namespace RemediationTool.API.Controllers;
 [Route("api/report")]
 public class ReportController : ControllerBase
 {
-    private readonly ReportService _service;
-    private readonly ILogger<ReportController> _logger;
     private readonly ReportService _reportService;
     private readonly IRejectedRowRepository _rejectedRowRepository;
+    private readonly ILogger<ReportController> _logger;
 
-    public ReportController(ReportService service, ILogger<ReportController> logger, ReportService reportService, IRejectedRowRepository rejectedRowRepository)
+    public ReportController(
+        ReportService reportService,
+        IRejectedRowRepository rejectedRowRepository,
+        ILogger<ReportController> logger)
     {
-        _service = service;
-        _logger = logger;
         _reportService = reportService;
         _rejectedRowRepository = rejectedRowRepository;
+        _logger = logger;
     }
 
-    // Get all files
-    [HttpGet]
-    public IActionResult GetAll()
+    /// <summary>Returns the most recent record per finding for the given FindingType.</summary>
+    [HttpGet("finding-type/{findingType}")]
+    public IActionResult GetByFindingType(string findingType)
     {
         try
         {
-            return Ok(_service.GetAll());
+            if (!Enum.TryParse<FindingType>(findingType, ignoreCase: true, out var parsed))
+                return BadRequest($"Invalid finding type '{findingType}'. Valid values: {string.Join(", ", Enum.GetNames<FindingType>())}");
+
+            return Ok(_reportService.GetByFindingType(parsed));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting all reports");
+            _logger.LogError(ex, "Error getting report by finding type {FindingType}", findingType);
             return StatusCode(500, "Internal server error");
         }
     }
 
-    // Get by status
-    [HttpGet("status/{status}")]
-    public IActionResult GetByStatus(string status)
-    {
-        try
-        {
-            return Ok(_service.GetByStatus(status));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting reports by status {Status}", status);
-            return StatusCode(500, "Internal server error");
-        }
-    }
-
-    // Summary
+    /// <summary>Returns counts of the most recent record per finding grouped by FindingType. Used by dashboard KPI cards.</summary>
     [HttpGet("summary")]
     public IActionResult GetSummary()
     {
         try
         {
-            return Ok(_service.GetSummary());
+            return Ok(_reportService.GetSummaryByFindingType());
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting summary");
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>Returns the full audit history for a single finding by its SourceRecordId.</summary>
+    [HttpGet("history/{sourceRecordId}")]
+    public IActionResult GetHistory(string sourceRecordId)
+    {
+        try
+        {
+            return Ok(_reportService.GetHistoryBySourceRecordId(sourceRecordId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting history for SourceRecordId {SourceRecordId}", sourceRecordId);
             return StatusCode(500, "Internal server error");
         }
     }

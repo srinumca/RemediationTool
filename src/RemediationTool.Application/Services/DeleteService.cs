@@ -1,18 +1,23 @@
-﻿using RemediationTool.Application.Interfaces;
-using RemediationTool.Application.Repositories;
-using RemediationTool.Domain;
+﻿using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 using Microsoft.Extensions.Logging;
 
 namespace RemediationTool.Application.Services;
 
+/// <summary>
+/// POC delete service — permanently deletes quarantined files and their stubs.
+/// NOTE: This is placeholder POC logic. When the Automated Deletion requirement
+/// (Req 59-66) is properly implemented, this service will be fully rewritten
+/// to evaluate quarantine hold periods, hard-delete files and breadcrumbs,
+/// and update the data model using the append-only pattern.
+/// </summary>
 public class DeleteService
 {
     private readonly IFileFindingRepository _repository;
     private readonly ILogger<DeleteService> _logger;
 
-    public DeleteService(IFileFindingRepository repository,
-                         ILogger<DeleteService> logger)
+    public DeleteService(IFileFindingRepository repository, ILogger<DeleteService> logger)
     {
         _repository = repository;
         _logger = logger;
@@ -20,7 +25,7 @@ public class DeleteService
 
     public async Task DeleteAsync(Guid id)
     {
-        var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
+        var file = _repository.GetById(id);
 
         if (file == null)
         {
@@ -28,45 +33,45 @@ public class DeleteService
             return;
         }
 
-        if (file.Status != FileStatus.Quarantined)
+        if (file.FindingType != FindingType.Quarantined)
         {
-            _logger.LogWarning("File is not in Quarantined state: {File}", file.FileName);
+            _logger.LogWarning("File is not in Quarantined state: {File}", file.FindingFileName);
             return;
         }
 
         try
         {
-            var originalPath = Path.Combine(Directory.GetCurrentDirectory(), file.FilePath);
-            var quarantinePath = file.QuarantinePath;
+            var quarantinePath = file.CurrentFileLocation;
+            var stubPath = (file.OriginalFileLocation ?? string.Empty) + "_Retention_Placeholder";
 
-            // 🔹 Delete from quarantine
+            // Delete quarantined file
             if (!string.IsNullOrWhiteSpace(quarantinePath) && File.Exists(quarantinePath))
-            {
                 File.Delete(quarantinePath);
-            }
 
-            // 🔹 Delete stub
-            var stubPath = originalPath + "_Retention_Placeholder";
+            // Delete breadcrumb stub
             if (File.Exists(stubPath))
-            {
                 File.Delete(stubPath);
-            }
 
-            // 🔹 Update metadata
-            file.Status = FileStatus.Deleted;
-            file.QuarantinePath = null;
-            file.UpdatedDate = DateTime.UtcNow;
+            // Update data model
+            file.FindingType = FindingType.Deleted;
+            file.DeletionDateUtc = DateTime.UtcNow;
+            file.CurrentFileLocation = string.Empty;
+            file.LastUpdateDateUtc = DateTime.UtcNow;
+            file.ErrorCategory = ErrorCategory.None;
+            file.ErrorDetail = null;
 
             _repository.Update(file);
 
-            _logger.LogInformation("File deleted permanently: {File}", file.FileName);
+            _logger.LogInformation("File deleted permanently: {File}", file.FindingFileName);
         }
         catch (Exception ex)
         {
-            file.Status = FileStatus.Failed;
+            file.ErrorCategory = ErrorCategory.RetryExhausted;
+            file.ErrorDetail = ex.Message;
+            file.LastUpdateDateUtc = DateTime.UtcNow;
             _repository.Update(file);
 
-            _logger.LogError(ex, "Delete failed: {File}", file.FileName);
+            _logger.LogError(ex, "Delete failed: {File}", file.FindingFileName);
         }
 
         await Task.CompletedTask;
@@ -74,13 +79,9 @@ public class DeleteService
 
     public async Task DeleteAllAsync()
     {
-        var files = _repository.GetAll()
-            .Where(x => x.Status == FileStatus.Quarantined)
-            .ToList();
+        var files = _repository.GetLatestByFindingType(FindingType.Quarantined).ToList();
 
         foreach (var file in files)
-        {
             await DeleteAsync(file.Id);
-        }
     }
 }

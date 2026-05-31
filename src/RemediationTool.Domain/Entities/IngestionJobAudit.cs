@@ -32,6 +32,14 @@ public class IngestionJobAudit
 
     public int ValidationFailureCount { get; set; }
 
+    // --- Finding Type breakdown (Req 7) ---
+    // Count of successfully ingested records grouped by FindingType.
+    // Satisfies the "Ingestion Success" audit report requirement:
+    // "Finding Type, Record Count" per type in the payload.
+    // Key = FindingType string value (e.g. "Obsolete", "Quarantined").
+    // Value = count of valid records with that type in this job.
+    public Dictionary<string, int> FindingTypeCounts { get; set; } = new();
+
     // Batch / checkpoint metadata
     public int BatchSize { get; set; }
 
