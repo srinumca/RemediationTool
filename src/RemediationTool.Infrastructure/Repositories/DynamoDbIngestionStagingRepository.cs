@@ -14,8 +14,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
     private const int BatchWriteLimit = 25;
 
-    // TTL — staged records auto-expire after 7 days if never cleaned up
-    // (handles server crash mid-resume scenario)
+    // Staged records auto-expire after 7 days if never cleaned up (server crash scenario)
     private static readonly TimeSpan TtlDuration = TimeSpan.FromDays(7);
 
     public DynamoDbIngestionStagingRepository(
@@ -27,8 +26,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
     }
 
     // -------------------------------------------------------------------------
-    // SaveValidFindings
-    // Replaces any existing staged records for this JobId (idempotent on re-upload)
+    // SaveValidFindings — idempotent (delete existing for jobId, write new)
     // -------------------------------------------------------------------------
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
     {
@@ -37,10 +35,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
         if (validFindings == null || validFindings.Count == 0) return;
 
-        // Delete any existing staged records for this jobId first
+        // Delete any existing staged records for this jobId first (idempotent on re-upload)
         DeleteByJobId(jobId);
 
-        // Write all new records in batches of 25
         var expiresAt = DateTimeOffset.UtcNow.Add(TtlDuration).ToUnixTimeSeconds();
         var sequenceNumber = 1;
 
@@ -52,21 +49,14 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             {
                 var item = new Dictionary<string, AttributeValue>
                 {
-                    // Composite key: JobId (PK) + SequenceNumber (SK)
                     ["JobId"] = new AttributeValue { S = jobId },
                     ["SequenceNumber"] = new AttributeValue { N = sequenceNumber.ToString() },
                     ["CreatedAtUtc"] = new AttributeValue { S = DateTime.UtcNow.ToString("O") },
-                    ["ExpiresAt"] = new AttributeValue { N = expiresAt.ToString() }, // TTL
-
-                    // Store the full FileFinding as a nested DynamoDB Map
+                    ["ExpiresAt"] = new AttributeValue { N = expiresAt.ToString() },  // TTL
                     ["Finding"] = new AttributeValue { M = DynamoDbAttributeMap.ToMap(finding) }
                 };
 
-                writeRequests.Add(new WriteRequest
-                {
-                    PutRequest = new PutRequest { Item = item }
-                });
-
+                writeRequests.Add(new WriteRequest { PutRequest = new PutRequest { Item = item } });
                 sequenceNumber++;
             }
 
@@ -81,9 +71,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
     }
 
     // -------------------------------------------------------------------------
-    // GetValidFindingsAfter
-    // Returns records with SequenceNumber > lastProcessedRecordCount
-    // Uses Query on composite key (JobId + SequenceNumber range condition)
+    // GetValidFindingsAfter — resume path, skips already-processed records
     // -------------------------------------------------------------------------
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
     {
@@ -103,7 +91,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                     [":jobId"] = new AttributeValue { S = jobId },
                     [":lastSeq"] = new AttributeValue { N = lastProcessedRecordCount.ToString() }
                 },
-                ScanIndexForward = true,   // ascending SequenceNumber order
+                ScanIndexForward = true,
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 
@@ -113,9 +101,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                     findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttr.M));
             }
 
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
         }
         while (lastKey != null);
 
@@ -140,18 +126,17 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             Select = Select.COUNT
         }).GetAwaiter().GetResult();
 
-        return response.Count;
+        return response.Count ?? 0;
     }
 
     // -------------------------------------------------------------------------
-    // DeleteByJobId
-    // Removes all staged records for the job after successful completion
+    // DeleteByJobId — cleanup after successful completion
     // -------------------------------------------------------------------------
     public void DeleteByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return;
 
-        // Query all keys first (can't batch delete without knowing the keys)
+        // Fetch all keys for this jobId (projected — don't load Finding data)
         var keysToDelete = new List<Dictionary<string, AttributeValue>>();
         Dictionary<string, AttributeValue>? lastKey = null;
 
@@ -165,16 +150,12 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 {
                     [":jobId"] = new AttributeValue { S = jobId }
                 },
-                // Only fetch the key attributes — no need to load Finding data
                 ProjectionExpression = "JobId, SequenceNumber",
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 
             keysToDelete.AddRange(response.Items);
-
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
         }
         while (lastKey != null);
 
@@ -184,10 +165,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         foreach (var chunk in keysToDelete.Chunk(BatchWriteLimit))
         {
             var deleteRequests = chunk
-                .Select(key => new WriteRequest
-                {
-                    DeleteRequest = new DeleteRequest { Key = key }
-                })
+                .Select(key => new WriteRequest { DeleteRequest = new DeleteRequest { Key = key } })
                 .ToList();
 
             _dynamoDb.BatchWriteItemAsync(new BatchWriteItemRequest

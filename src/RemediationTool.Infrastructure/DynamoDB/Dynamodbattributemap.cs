@@ -1,24 +1,13 @@
 ﻿using Amazon.DynamoDBv2.Model;
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enum;
+using RemediationTool.Domain.Enum;    // IngestionJobStatus
+using RemediationTool.Domain.Enums;   // FindingType, ErrorCategory
 
 namespace RemediationTool.Infrastructure.DynamoDB;
 
 /// <summary>
 /// Single source of truth for converting domain entities to/from
 /// DynamoDB AttributeValue dictionaries.
-///
-/// DynamoDB stores data as Dictionary&lt;string, AttributeValue&gt; where
-/// each AttributeValue is one of: S (string), N (number), BOOL, M (map), NULL.
-///
-/// Rules used here:
-///   - All strings stored as S — null/empty stored as NULL
-///   - All numbers (int, long) stored as N (string representation)
-///   - All DateTimes stored as S in ISO 8601 UTC format
-///   - All booleans stored as BOOL
-///   - Nullable types: stored as NULL when null
-///   - Dictionary&lt;string, int&gt; stored as M (map of N values)
-///   - Nested objects (FileFinding inside staged findings) stored as M
 /// </summary>
 public static class DynamoDbAttributeMap
 {
@@ -40,10 +29,15 @@ public static class DynamoDbAttributeMap
         ["FindingFileFormat"] = S(f.FindingFileFormat),
         ["FindingFileSizeBytes"] = NNullable(f.FindingFileSizeBytes),
         ["CurrentFileLocation"] = S(f.CurrentFileLocation),
-        ["FindingType"] = S(f.FindingType),
-        ["DataSystem"] = S(f.DataSystem ?? string.Empty),
+        ["FindingType"] = S(f.FindingType),           // string on entity
+        ["DataSystem"] = S(f.DataSystem),
         ["OriginatingDataSystem"] = S(f.OriginatingDataSystem),
         ["OriginatingVendorTool"] = S(f.OriginatingVendorTool),
+        ["OriginalFileLocation"] = SNullable(f.OriginalFileLocation),
+        ["QuarantineDateUtc"] = SNullable(f.QuarantineDateUtc),
+        ["RestorationDateUtc"] = SNullable(f.RestorationDateUtc),
+        ["ExceptionDateUtc"] = SNullable(f.ExceptionDateUtc),
+        ["DeletionDateUtc"] = SNullable(f.DeletionDateUtc),
         ["LastModifiedDateUtc"] = SNullable(f.LastModifiedDateUtc),
         ["CreatedDateUtc"] = SNullable(f.CreatedDateUtc),
         ["LastAccessedDateUtc"] = SNullable(f.LastAccessedDateUtc),
@@ -61,16 +55,12 @@ public static class DynamoDbAttributeMap
         ["SensitivityLabel"] = SNullable(f.SensitivityLabel),
         ["DetectionDateUtc"] = SNullable(f.DetectionDateUtc),
         ["RecommendedAction"] = SNullable(f.RecommendedAction),
-        ["OriginalFileLocation"] = SNullable(f.OriginalFileLocation),
-        ["QuarantineDateUtc"] = SNullable(f.QuarantineDateUtc),
-        ["RestoredDateUtc"] = SNullable(f.RestoredDateUtc),
-        ["DeletedDateUtc"] = SNullable(f.DeletedDateUtc),
         ["RestorationTicketIdentifier"] = SNullable(f.RestorationTicketIdentifier),
         ["RestorationRequestorEmail"] = SNullable(f.RestorationRequestorEmail),
         ["RestorationComment"] = SNullable(f.RestorationComment),
-        ["Status"] = S(f.Status.ToString()),
-        ["IsValid"] = Bool(f.IsValid),
-        ["ErrorReason"] = S(f.ErrorReason ?? string.Empty)
+        ["ErrorCategory"] = S(f.ErrorCategory.ToString()),  // enum — use .ToString()
+        ["ErrorDetail"] = SNullable(f.ErrorDetail),
+        // IsValid and IngestionErrorReason are pipeline-only — NOT persisted to DynamoDB
     };
 
     public static FileFinding ToFileFinding(Dictionary<string, AttributeValue> m) => new()
@@ -87,10 +77,15 @@ public static class DynamoDbAttributeMap
         FindingFileFormat = StringVal(m, "FindingFileFormat"),
         FindingFileSizeBytes = NullableLongVal(m, "FindingFileSizeBytes"),
         CurrentFileLocation = StringVal(m, "CurrentFileLocation"),
-        FindingType = StringVal(m, "FindingType"),
+        FindingType = StringVal(m, "FindingType"),    // string on entity
         DataSystem = StringVal(m, "DataSystem"),
         OriginatingDataSystem = StringVal(m, "OriginatingDataSystem"),
         OriginatingVendorTool = StringVal(m, "OriginatingVendorTool"),
+        OriginalFileLocation = NullableStringVal(m, "OriginalFileLocation"),
+        QuarantineDateUtc = NullableDateVal(m, "QuarantineDateUtc"),
+        RestorationDateUtc = NullableDateVal(m, "RestorationDateUtc"),
+        ExceptionDateUtc = NullableDateVal(m, "ExceptionDateUtc"),
+        DeletionDateUtc = NullableDateVal(m, "DeletionDateUtc"),
         LastModifiedDateUtc = NullableDateVal(m, "LastModifiedDateUtc"),
         CreatedDateUtc = NullableDateVal(m, "CreatedDateUtc"),
         LastAccessedDateUtc = NullableDateVal(m, "LastAccessedDateUtc"),
@@ -108,16 +103,12 @@ public static class DynamoDbAttributeMap
         SensitivityLabel = NullableStringVal(m, "SensitivityLabel"),
         DetectionDateUtc = NullableDateVal(m, "DetectionDateUtc"),
         RecommendedAction = NullableStringVal(m, "RecommendedAction"),
-        OriginalFileLocation = NullableStringVal(m, "OriginalFileLocation"),
-        QuarantineDateUtc = NullableDateVal(m, "QuarantineDateUtc"),
-        RestoredDateUtc = NullableDateVal(m, "RestoredDateUtc"),
-        DeletedDateUtc = NullableDateVal(m, "DeletedDateUtc"),
         RestorationTicketIdentifier = NullableStringVal(m, "RestorationTicketIdentifier"),
         RestorationRequestorEmail = NullableStringVal(m, "RestorationRequestorEmail"),
         RestorationComment = NullableStringVal(m, "RestorationComment"),
-        Status = EnumVal<FileStatus>(m, "Status"),
-        IsValid = BoolVal(m, "IsValid"),
-        ErrorReason = StringVal(m, "ErrorReason")
+        ErrorCategory = EnumVal<ErrorCategory>(m, "ErrorCategory"),
+        ErrorDetail = NullableStringVal(m, "ErrorDetail"),
+        // IsValid defaults to true; IngestionErrorReason defaults to empty — not stored in DynamoDB
     };
 
     // -------------------------------------------------------------------------
@@ -216,7 +207,6 @@ public static class DynamoDbAttributeMap
             WorkingFileRecordCount = IntVal(m, "WorkingFileRecordCount")
         };
 
-        // Deserialise FindingTypeCounts map
         if (m.TryGetValue("FindingTypeCounts", out var ftc) && ftc.M != null)
             audit.FindingTypeCounts = ftc.M.ToDictionary(
                 kv => kv.Key,
@@ -329,7 +319,7 @@ public static class DynamoDbAttributeMap
             : new AttributeValue { S = value };
 
     private static AttributeValue S(DateTime dt) =>
-        new() { S = dt.ToUniversalTime().ToString("O") }; // ISO 8601
+        new() { S = dt.ToUniversalTime().ToString("O") };
 
     private static AttributeValue SNullable(string? value) =>
         value == null ? new AttributeValue { NULL = true } : S(value);
@@ -367,7 +357,7 @@ public static class DynamoDbAttributeMap
         m.TryGetValue(key, out var v) && v.N != null && long.TryParse(v.N, out var n) ? n : null;
 
     private static bool BoolVal(Dictionary<string, AttributeValue> m, string key) =>
-        m.TryGetValue(key, out var v) && v.BOOL;
+        m.TryGetValue(key, out var v) && v.BOOL == true;
 
     private static DateTime DateVal(Dictionary<string, AttributeValue> m, string key) =>
         m.TryGetValue(key, out var v) && v.S != null &&

@@ -36,10 +36,7 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
             }).GetAwaiter().GetResult();
 
             rows.AddRange(response.Items.Select(DynamoDbAttributeMap.ToRejectedRowDetail));
-
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
         }
         while (lastKey != null);
 
@@ -48,7 +45,6 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
 
     public List<RejectedRowDetail> GetByJobId(string jobId)
     {
-        // Query the GSI: JobId-ErrorDateUtc-index
         var rows = new List<RejectedRowDetail>();
         Dictionary<string, AttributeValue>? lastKey = null;
 
@@ -67,10 +63,7 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
             }).GetAwaiter().GetResult();
 
             rows.AddRange(response.Items.Select(DynamoDbAttributeMap.ToRejectedRowDetail));
-
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
         }
         while (lastKey != null);
 
@@ -86,10 +79,7 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
             var writeRequests = chunk
                 .Select(r => new WriteRequest
                 {
-                    PutRequest = new PutRequest
-                    {
-                        Item = DynamoDbAttributeMap.ToMap(r)
-                    }
+                    PutRequest = new PutRequest { Item = DynamoDbAttributeMap.ToMap(r) }
                 })
                 .ToList();
 

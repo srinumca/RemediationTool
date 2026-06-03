@@ -20,7 +20,7 @@ public class ReportService
             .Select(x => new FileReportDto
             {
                 FindingFileName = x.FindingFileName,
-                FindingType = x.FindingType,
+                //FindingType = x.FindingType,
                 CurrentFileLocation = x.CurrentFileLocation,
                 OriginalFileLocation = x.OriginalFileLocation,
                 LastModifiedDateUtc = x.LastModifiedDateUtc,
@@ -47,7 +47,7 @@ public class ReportService
             .Select(x => new FileReportDto
             {
                 FindingFileName = x.FindingFileName,
-                FindingType = x.FindingType,
+                //FindingType = x.FindingType,
                 CurrentFileLocation = x.CurrentFileLocation,
                 OriginalFileLocation = x.OriginalFileLocation,
                 LastModifiedDateUtc = x.LastModifiedDateUtc,

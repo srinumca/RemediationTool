@@ -34,10 +34,7 @@ public class DynamoDbIngestionJobAuditRepository : IIngestionJobAuditRepository
             }).GetAwaiter().GetResult();
 
             audits.AddRange(response.Items.Select(DynamoDbAttributeMap.ToIngestionJobAudit));
-
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
         }
         while (lastKey != null);
 

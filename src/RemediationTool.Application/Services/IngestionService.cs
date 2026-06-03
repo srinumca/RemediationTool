@@ -484,7 +484,7 @@ public class IngestionService : IIngestionService
             FindingFileFormat = GetExcelValue(row, headerMap, InboundLayoutColumns.FindingFileFormat),
             FindingFileSizeBytes = TryParseNullableLong(GetExcelValue(row, headerMap, InboundLayoutColumns.FindingFileSize)),
             CurrentFileLocation = GetExcelValue(row, headerMap, InboundLayoutColumns.CurrentFileLocation),
-            FindingType = ParseFindingType(GetExcelValue(row, headerMap, InboundLayoutColumns.FindingType)),
+            FindingType = ParseFindingType(GetExcelValue(row, headerMap, InboundLayoutColumns.FindingType)).ToString(),
             DataSystem = GetExcelValue(row, headerMap, InboundLayoutColumns.DataSystem),
 
             OriginatingDataSystem = GetExcelValue(row, headerMap, InboundLayoutColumns.OriginatingDataSystem),
@@ -540,7 +540,7 @@ public class IngestionService : IIngestionService
             FindingFileFormat = GetCsvValue(csv, InboundLayoutColumns.FindingFileFormat),
             FindingFileSizeBytes = TryParseNullableLong(GetCsvValue(csv, InboundLayoutColumns.FindingFileSize)),
             CurrentFileLocation = GetCsvValue(csv, InboundLayoutColumns.CurrentFileLocation),
-            FindingType = ParseFindingType(GetCsvValue(csv, InboundLayoutColumns.FindingType)),
+            FindingType = ParseFindingType(GetCsvValue(csv, InboundLayoutColumns.FindingType)).ToString(),
             DataSystem = GetCsvValue(csv, InboundLayoutColumns.DataSystem),
 
             OriginatingDataSystem = GetCsvValue(csv, InboundLayoutColumns.OriginatingDataSystem),

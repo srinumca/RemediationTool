@@ -33,7 +33,7 @@ public class RestoreService
             return;
         }
 
-        if (file.FindingType != FindingType.Quarantined)
+        if (file.FindingType != FindingType.Quarantined.ToString())
         {
             _logger.LogWarning("File is not in Quarantined state: {File}", file.FindingFileName);
             return;
@@ -77,7 +77,7 @@ public class RestoreService
                 File.Delete(stubPath);
 
             // Update data model
-            file.FindingType = FindingType.Restored;
+            file.FindingType = FindingType.Restored.ToString();
             file.RestorationDateUtc = DateTime.UtcNow;
             file.CurrentFileLocation = originalPath;
             file.OriginalFileLocation = null;

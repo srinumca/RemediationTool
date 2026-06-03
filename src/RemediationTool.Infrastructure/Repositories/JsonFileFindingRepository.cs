@@ -123,7 +123,7 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
             return ReadAllInternal()
                 .GroupBy(GetGroupKey)
                 .Select(g => g.OrderByDescending(x => x.LastUpdateDateUtc).First())
-                .Where(x => x.FindingType == findingType)
+                .Where(x => x.FindingType == findingType.ToString())
                 .OrderBy(x => x.FindingFileName)
                 .ToList();
         }
@@ -190,7 +190,7 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
                 .AsEnumerable();
 
             if (findingType.HasValue)
-                query = query.Where(x => x.FindingType == findingType.Value);
+                query = query.Where(x => x.FindingType == findingType.Value.ToString());
 
             var allLatest = query.ToList();
 
@@ -214,7 +214,7 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return ReadAllInternal()
+            return (IReadOnlyDictionary<FindingType, int>)ReadAllInternal()
                 .GroupBy(GetGroupKey)
                 .Select(g => g.OrderByDescending(x => x.LastUpdateDateUtc).First())
                 .GroupBy(x => x.FindingType)
@@ -229,7 +229,7 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
             return ReadAllInternal()
                 .GroupBy(GetGroupKey)
                 .Select(g => g.OrderByDescending(x => x.LastUpdateDateUtc).First())
-                .Count(x => x.FindingType == findingType);
+                .Count(x => x.FindingType == findingType.ToString());
         }
     }
 

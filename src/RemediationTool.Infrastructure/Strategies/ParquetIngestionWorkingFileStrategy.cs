@@ -230,7 +230,7 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
                     FindingFileSizeBytes = findingFileSizes[i] == 0L ? null : findingFileSizes[i],
                     CurrentFileLocation = NullIfEmpty(currentFileLocations[i]),
 
-                    FindingType = parsedFindingType,
+                    FindingType = parsedFindingType.ToString(),
 
                     OriginatingDataSystem = NullIfEmpty(originatingDataSystems[i]),
                     OriginatingVendorTool = NullIfEmpty(originatingVendorTools[i]),

@@ -1,7 +1,4 @@
-using Amazon.DynamoDBv2;
-using Amazon.S3;
 using FluentValidation;
-using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
@@ -15,7 +12,7 @@ using RemediationTool.Infrastructure.Strategies;
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------------------------------------------------------------------------
-// Core framework services
+// Core framework
 // ---------------------------------------------------------------------------
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -30,25 +27,26 @@ builder.Services.Configure<IngestionProcessingOptions>(
     builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
 
 // ---------------------------------------------------------------------------
-// Persistence — config-driven switch
-// Set "Persistence:Provider" to "DynamoDB" or "Json" in appsettings.json
+// AWS clients — lazy registration, SSO-aware
+// Mirrors AwsSampleApi/Infrastructure/AwsSetup.cs pattern exactly.
+// Reads: AWS:Profile, AWS:SessionToken, AWS:AccessKey/SecretKey, or default chain.
+// App starts WITHOUT credentials — credential errors happen at the endpoint level.
+// ---------------------------------------------------------------------------
+builder.Services.AddRemediationAwsServices(builder.Configuration);
+
+// ---------------------------------------------------------------------------
+// Persistence — config-driven switch (appsettings.json: Persistence:Provider)
 // ---------------------------------------------------------------------------
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Json";
 var isDynamo = persistenceProvider.Equals("DynamoDB", StringComparison.OrdinalIgnoreCase);
 
 if (isDynamo)
 {
-    // Bind DynamoDB table name configuration
+    // Bind DynamoDB table names from appsettings AWS:DynamoDB section
     builder.Services.Configure<DynamoDbOptions>(
         builder.Configuration.GetSection(DynamoDbOptions.SectionName));
 
-    // Register AWS DynamoDB client
-    builder.Services.AddAWSService<IAmazonDynamoDB>();
-
-    // Register table initialiser — runs on startup, creates tables if missing
-    builder.Services.AddSingleton<DynamoDbTableInitialiser>();
-
-    // Register all 5 DynamoDB repositories
+    // All 5 repositories — DynamoDB implementations
     builder.Services.AddSingleton<IFileFindingRepository, DynamoDbFileFindingRepository>();
     builder.Services.AddSingleton<IIngestionJobAuditRepository, DynamoDbIngestionJobAuditRepository>();
     builder.Services.AddSingleton<IRejectedRowRepository, DynamoDbRejectedRowRepository>();
@@ -57,7 +55,7 @@ if (isDynamo)
 }
 else
 {
-    // Register all 5 JSON repositories
+    // All 5 repositories — JSON file implementations (local dev)
     builder.Services.AddSingleton<IFileFindingRepository, JsonFileFindingRepository>();
     builder.Services.AddSingleton<IIngestionJobAuditRepository, JsonIngestionJobAuditRepository>();
     builder.Services.AddSingleton<IRejectedRowRepository, JsonRejectedRowRepository>();
@@ -71,20 +69,14 @@ else
 builder.Services.AddScoped<IIngestionWorkingFileStrategy, ParquetIngestionWorkingFileStrategy>();
 
 // ---------------------------------------------------------------------------
-// Storage — config-driven switch
-// Set "Storage:Type" to "S3" or "Local" in appsettings.json
+// Storage — config-driven switch (appsettings.json: Storage:Type)
 // ---------------------------------------------------------------------------
 var storageType = builder.Configuration["Storage:Type"] ?? "Local";
 
 if (storageType.Equals("S3", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddAWSService<IAmazonS3>();
     builder.Services.AddSingleton<IStorageService, S3StorageService>();
-}
 else
-{
     builder.Services.AddSingleton<IStorageService, LocalStorageService>();
-}
 
 // ---------------------------------------------------------------------------
 // Application services
@@ -96,24 +88,10 @@ builder.Services.AddScoped<DeleteService>();
 builder.Services.AddScoped<ReportService>();
 
 // ---------------------------------------------------------------------------
-// Build app
+// Build
 // ---------------------------------------------------------------------------
 var app = builder.Build();
 
-// ---------------------------------------------------------------------------
-// DynamoDB table initialisation — runs once on startup when using DynamoDB.
-// Checks each table exists and creates it if not.
-// In production, CDK has already created the tables — this is a no-op.
-// ---------------------------------------------------------------------------
-if (isDynamo)
-{
-    var initialiser = app.Services.GetRequiredService<DynamoDbTableInitialiser>();
-    await initialiser.InitialiseAsync();
-}
-
-// ---------------------------------------------------------------------------
-// Middleware pipeline
-// ---------------------------------------------------------------------------
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

@@ -83,7 +83,7 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
         // Conditional rules for Quarantined records
         // ---------------------------------------------------------------
 
-        When(x => x.FindingType == FindingType.Quarantined, () =>
+        When(x => x.FindingType == FindingType.Quarantined.ToString(), () =>
         {
             RuleFor(x => x.OriginalFileLocation)
                 .NotEmpty()
@@ -98,7 +98,7 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
         // Conditional rules for Exclusion records
         // ---------------------------------------------------------------
 
-        When(x => x.FindingType == FindingType.Exclusion, () =>
+        When(x => x.FindingType == FindingType.Exclusion.ToString(), () =>
         {
             RuleFor(x => x.ExceptionDateUtc)
                 .NotNull()

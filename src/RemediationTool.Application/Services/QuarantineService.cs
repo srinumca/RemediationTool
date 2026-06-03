@@ -55,7 +55,7 @@ public class QuarantineService
                 if (file.LastModifiedDateUtc.HasValue
                     && file.LastModifiedDateUtc.Value > DateTime.UtcNow.AddYears(-RetentionYears))
                 {
-                    file.FindingType = FindingType.NotObsolete;
+                    file.FindingType = FindingType.NotObsolete.ToString();
                     file.LastUpdateDateUtc = DateTime.UtcNow;
                     _repository.Update(file);
 
@@ -93,7 +93,7 @@ public class QuarantineService
                 // Update data model
                 file.OriginalFileLocation = file.CurrentFileLocation;
                 file.CurrentFileLocation = quarantinePath;
-                file.FindingType = FindingType.Quarantined;
+                file.FindingType = FindingType.Quarantined.ToString();
                 file.QuarantineDateUtc = DateTime.UtcNow;
                 file.LastUpdateDateUtc = DateTime.UtcNow;
                 file.ErrorCategory = ErrorCategory.None;

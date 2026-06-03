@@ -33,7 +33,7 @@ public class DeleteService
             return;
         }
 
-        if (file.FindingType != FindingType.Quarantined)
+        if (file.FindingType != FindingType.Quarantined.ToString())
         {
             _logger.LogWarning("File is not in Quarantined state: {File}", file.FindingFileName);
             return;
@@ -41,7 +41,7 @@ public class DeleteService
 
         try
         {
-            var quarantinePath = file.CurrentFileLocation;
+            var quarantinePath = file.CurrentFileLocation.ToString();
             var stubPath = (file.OriginalFileLocation ?? string.Empty) + "_Retention_Placeholder";
 
             // Delete quarantined file
@@ -53,7 +53,7 @@ public class DeleteService
                 File.Delete(stubPath);
 
             // Update data model
-            file.FindingType = FindingType.Deleted;
+            file.FindingType = FindingType.Deleted.ToString();
             file.DeletionDateUtc = DateTime.UtcNow;
             file.CurrentFileLocation = string.Empty;
             file.LastUpdateDateUtc = DateTime.UtcNow;
@@ -67,7 +67,7 @@ public class DeleteService
         catch (Exception ex)
         {
             file.ErrorCategory = ErrorCategory.RetryExhausted;
-            file.ErrorDetail = ex.Message;
+            file.ErrorDetail = ex.Message.ToString();
             file.LastUpdateDateUtc = DateTime.UtcNow;
             _repository.Update(file);
 

@@ -361,3 +361,19 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---------------------------------------------------------------
+# Remediation Tool — project-specific additions
+# ---------------------------------------------------------------
+
+# AWS credentials and environment-specific overrides — NEVER commit
+src/RemediationTool.API/appsettings.Development.json
+
+# Runtime-generated storage (local JSON files, archived CSVs, Parquet working files)
+src/RemediationTool.API/storage/
+
+# Runtime-generated data files (checkpoints, staged findings, audit logs)
+src/RemediationTool.API/Data/
+
+# CDK synthesised output — generated, not authored
+cdk.out/

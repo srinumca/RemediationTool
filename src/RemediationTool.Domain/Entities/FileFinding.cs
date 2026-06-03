@@ -93,7 +93,7 @@ public class FileFinding
     /// Allowed values: Obsolete, Quarantined, Restored, Deleted, NotObsolete, Exclusion.
     /// Maps to: Finding_Type (Data Model).
     /// </summary>
-    public FindingType FindingType { get; set; }
+    public string FindingType { get; set; } = string.Empty;
 
     /// <summary>
     /// The specific NetApp drive path including parent folder
