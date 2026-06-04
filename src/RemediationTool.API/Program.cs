@@ -37,7 +37,7 @@ builder.Services.AddRemediationAwsServices(builder.Configuration);
 // ---------------------------------------------------------------------------
 // Persistence — config-driven switch (appsettings.json: Persistence:Provider)
 // ---------------------------------------------------------------------------
-var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Json";
+var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "DynamoDB";
 var isDynamo = persistenceProvider.Equals("DynamoDB", StringComparison.OrdinalIgnoreCase);
 
 if (isDynamo)

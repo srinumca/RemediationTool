@@ -60,7 +60,7 @@ public static class AwsSetup
                 : new SessionAWSCredentials(accessKey, secretKey, sessionToken);
         }
 
-        var region = awsOptions.Region ?? Amazon.RegionEndpoint.APSouth1;
+        var region = awsOptions.Region ?? Amazon.RegionEndpoint.USEast2;
 
         // --- IAmazonDynamoDB (lazy factory — app starts without credentials) ---
         services.AddSingleton<IAmazonDynamoDB>(_ =>

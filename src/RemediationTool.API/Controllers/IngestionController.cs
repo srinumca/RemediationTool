@@ -38,12 +38,25 @@ public class IngestionController : ControllerBase
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(IFormFile file)
     {
-        var response = await _ingestionService.ProcessAsync(file);
+       
+        try
+        {
+            var response = await _ingestionService.ProcessAsync(file);
 
-        if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
-            return BadRequest(response);
+            if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
+                return BadRequest(response);
 
-        return Ok(response);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex.Message) ;
+            return StatusCode(500, new IngestionUploadResponse
+            {
+                Status = IngestionJobStatus.Failed,
+                Message = $"An error occurred while processing the file: {ex.StackTrace}"
+            });
+        }
     }
 
     /// <summary>Resumes a previously failed or partial ingestion job from its last checkpoint.</summary>
