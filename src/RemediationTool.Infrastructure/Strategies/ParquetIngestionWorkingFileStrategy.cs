@@ -256,31 +256,10 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
         new DataField<string>("FindingType"),
         new DataField<string>("OriginatingDataSystem"),
         new DataField<string>("OriginatingVendorTool"),
-
-        new DataField<DateTime>("LastModifiedDateUtc"),
-        new DataField<DateTime>("CreatedDateUtc"),
-        new DataField<DateTime>("LastAccessedDateUtc"),
-
         new DataField<string>("SiteOwner"),
         new DataField<string>("FileOwner"),
-        new DataField<string>("BusinessUnit"),
-        new DataField<string>("Division"),
-        new DataField<string>("Department"),
-        new DataField<string>("Region"),
-        new DataField<string>("Country"),
-        new DataField<string>("PolicyName"),
-        new DataField<string>("PolicyId"),
-        new DataField<string>("FindingReason"),
-        new DataField<string>("RiskLevel"),
-        new DataField<string>("SensitivityLabel"),
-
-        new DataField<DateTime>("DetectionDateUtc"),
-
-        new DataField<string>("RecommendedAction"),
         new DataField<string>("OriginalFileLocation"),
-
         new DataField<DateTime>("QuarantineDateUtc"),
-
         new DataField<string>("RestorationTicketIdentifier"),
         new DataField<string>("RestorationRequestorEmail"),
         new DataField<string>("RestorationComment"),
