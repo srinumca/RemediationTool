@@ -17,22 +17,30 @@ public static class DynamoDbAttributeMap
 
     public static Dictionary<string, AttributeValue> ToMap(FileFinding f) => new()
     {
-        ["Id"] = S(f.Id.ToString()),
-        ["RecordVersionId"] = S(f.RecordVersionId),
-        ["SourceRecordId"] = SNullable(f.SourceRecordId),
-        ["IngestionJobId"] = SNullable(f.IngestionJobId),
-        ["InboundFileName"] = S(f.InboundFileName),
-        ["UserName"] = S(f.UserName),
-        ["LoadDateUtc"] = S(f.LoadDateUtc),
-        ["LastUpdateDateUtc"] = S(f.LastUpdateDateUtc),
-        ["FindingFileName"] = S(f.FindingFileName),
-        ["FindingFileFormat"] = S(f.FindingFileFormat),
+        ["Id"] = new AttributeValue { S = f.Id.ToString() },
+        ["RecordVersionId"] = new AttributeValue { S = f.RecordVersionId ?? string.Empty },
+        ["SourceRecordId"] = new AttributeValue { S = string.IsNullOrWhiteSpace(f.SourceRecordId) ? f.Id.ToString() : f.SourceRecordId},
+        ["IngestionJobId"] = new AttributeValue { S = f.IngestionJobId ?? string.Empty },
+        ["InboundFileName"] = new AttributeValue { S = f.InboundFileName ?? string.Empty },
+        ["UserName"] = new AttributeValue { S = f.UserName ?? "System" },
+        ["LoadDateUtc"] = new AttributeValue { S = f.LoadDateUtc.ToUniversalTime().ToString("O") },
+        ["LastUpdateDateUtc"] = new AttributeValue { S = f.LastUpdateDateUtc.ToUniversalTime().ToString("O") },
+        ["FindingFileName"] = new AttributeValue { S = f.FindingFileName ?? string.Empty },
+        ["FindingFileFormat"] = new AttributeValue { S = f.FindingFileFormat ?? string.Empty },
         ["FindingFileSizeBytes"] = NNullable(f.FindingFileSizeBytes),
-        ["CurrentFileLocation"] = S(f.CurrentFileLocation),
-        ["FindingType"] = S(f.FindingType),           // string on entity
-        ["DataSystem"] = S(f.DataSystem),
-        ["OriginatingDataSystem"] = S(f.OriginatingDataSystem),
-        ["OriginatingVendorTool"] = S(f.OriginatingVendorTool),
+        ["CurrentFileLocation"] = new AttributeValue { S = f.CurrentFileLocation ?? string.Empty },
+        ["FindingType"] = new AttributeValue
+        {
+            S = string.IsNullOrWhiteSpace(f.FindingType)
+                      ? "Unknown" : f.FindingType
+        },
+        ["DataSystem"] = new AttributeValue
+        {
+            S = string.IsNullOrWhiteSpace(f.DataSystem)
+                     ? "Unknown" : f.DataSystem
+        },
+        ["OriginatingDataSystem"] = new AttributeValue { S = f.OriginatingDataSystem ?? string.Empty },
+        ["OriginatingVendorTool"] = new AttributeValue { S = f.OriginatingVendorTool ?? string.Empty },
         ["OriginalFileLocation"] = SNullable(f.OriginalFileLocation),
         ["QuarantineDateUtc"] = SNullable(f.QuarantineDateUtc),
         ["RestorationDateUtc"] = SNullable(f.RestorationDateUtc),

@@ -15,8 +15,9 @@ public static class IngestionWorkingFilePathBuilder
             createdAtUtc.ToString("MM"),
             createdAtUtc.ToString("dd"),
             jobId,
-            $"{safeFileName}.parquet");
-    }
+            $"{safeFileName}.parquet")
+            .Replace("\\", "/");
+            }
 
     private static string SanitizeFileNameWithoutExtension(string fileName)
     {

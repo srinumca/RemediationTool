@@ -76,9 +76,13 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
         // ---------------------------------------------------------------
 
         RuleFor(x => x.FindingType)
-            .IsInEnum()
-            .WithMessage("Finding_Type is invalid. Must be one of: Obsolete, Quarantined, Restored, Deleted, NotObsolete, Exclusion.");
-
+        .NotEmpty()
+        .WithMessage("Finding_Type is required.")
+        .Must(value => Enum.TryParse<FindingType>(
+            value?.Replace(" ", ""),
+            ignoreCase: true,
+            out _))
+        .WithMessage($"Finding_Type is invalid. Allowed values: {string.Join(", ", Enum.GetNames<FindingType>())}");
         // ---------------------------------------------------------------
         // Conditional rules for Quarantined records
         // ---------------------------------------------------------------
