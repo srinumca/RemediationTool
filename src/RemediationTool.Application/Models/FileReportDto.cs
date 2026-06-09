@@ -21,9 +21,6 @@ public sealed class FileReportDto
     /// <summary>Original SMB/NFS path before quarantine. Null for non-quarantined records.</summary>
     public string? OriginalFileLocation { get; init; }
 
-    /// <summary>UTC timestamp of the file's last modification at source.</summary>
-    public DateTime? LastModifiedDateUtc { get; init; }
-
     /// <summary>UTC date the file was quarantined. Null if not yet quarantined.</summary>
     public DateTime? QuarantineDateUtc { get; init; }
 

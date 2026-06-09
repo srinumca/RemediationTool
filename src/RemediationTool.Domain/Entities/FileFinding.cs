@@ -132,57 +132,15 @@ public class FileFinding
     /// <summary>UTC date the file was permanently deleted. Maps to: Deletion_Date.</summary>
     public DateTime? DeletionDateUtc { get; set; }
 
-    /// <summary>UTC timestamp of the file's last modification at source. Used for obsolescence check (10+ years).</summary>
-    public DateTime? LastModifiedDateUtc { get; set; }
-
-    /// <summary>UTC timestamp of when the file was originally created.</summary>
-    public DateTime? CreatedDateUtc { get; set; }
-
-    /// <summary>UTC timestamp of when the file was last accessed.</summary>
-    public DateTime? LastAccessedDateUtc { get; set; }
-
     /// <summary>Associate name of the site or drive owner. Maps to: Site_Owner.</summary>
     public string? SiteOwner { get; set; }
 
     /// <summary>Associate name of the file owner. Maps to: File_Owner.</summary>
     public string? FileOwner { get; set; }
 
-    /// <summary>Business unit associated with the file owner or data system.</summary>
-    public string? BusinessUnit { get; set; }
+    
 
-    /// <summary>Division associated with the file owner or data system.</summary>
-    public string? Division { get; set; }
-
-    /// <summary>Department associated with the file owner or data system.</summary>
-    public string? Department { get; set; }
-
-    /// <summary>Geographic region of the data system (e.g. US, EMEA, APAC).</summary>
-    public string? Region { get; set; }
-
-    /// <summary>Country of the data system.</summary>
-    public string? Country { get; set; }
-
-    /// <summary>Name of the data governance policy that flagged this file.</summary>
-    public string? PolicyName { get; set; }
-
-    /// <summary>Identifier of the data governance policy.</summary>
-    public string? PolicyId { get; set; }
-
-    /// <summary>Human-readable reason why this file was flagged as a finding.</summary>
-    public string? FindingReason { get; set; }
-
-    /// <summary>Risk level assigned by the source scanning tool (Low, Medium, High, Critical).</summary>
-    public string? RiskLevel { get; set; }
-
-    /// <summary>Sensitivity label applied to the file (e.g. Confidential, Internal).</summary>
-    public string? SensitivityLabel { get; set; }
-
-    /// <summary>UTC date the finding was detected by the source scanning tool.</summary>
-    public DateTime? DetectionDateUtc { get; set; }
-
-    /// <summary>Recommended remediation action as suggested by the source scanning tool.</summary>
-    public string? RecommendedAction { get; set; }
-
+      
     // =========================================================================
     // RESTORATION WORKFLOW FIELDS
     // =========================================================================

@@ -21,11 +21,6 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
         "SMB", "NFS", "M365", "OneDrive", "SharePoint"
     };
 
-    private static readonly string[] AllowedRiskLevels =
-    {
-        "Low", "Medium", "High", "Critical"
-    };
-
     public FileFindingValidator()
     {
         // ---------------------------------------------------------------
@@ -117,39 +112,6 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
             .GreaterThanOrEqualTo(0)
             .When(x => x.FindingFileSizeBytes.HasValue)
             .WithMessage("Finding_File_Size must be greater than or equal to 0.");
-
-        // ---------------------------------------------------------------
-        // Optional date fields — must not be in the future
-        // ---------------------------------------------------------------
-
-        RuleFor(x => x.LastModifiedDateUtc)
-            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
-            .When(x => x.LastModifiedDateUtc.HasValue)
-            .WithMessage("Last_Modified_Date cannot be in the future.");
-
-        RuleFor(x => x.CreatedDateUtc)
-            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
-            .When(x => x.CreatedDateUtc.HasValue)
-            .WithMessage("Created_Date cannot be in the future.");
-
-        RuleFor(x => x.LastAccessedDateUtc)
-            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
-            .When(x => x.LastAccessedDateUtc.HasValue)
-            .WithMessage("Last_Accessed_Date cannot be in the future.");
-
-        RuleFor(x => x.DetectionDateUtc)
-            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
-            .When(x => x.DetectionDateUtc.HasValue)
-            .WithMessage("Detection_Date cannot be in the future.");
-
-        // ---------------------------------------------------------------
-        // Optional enum-constrained string fields
-        // ---------------------------------------------------------------
-
-        RuleFor(x => x.RiskLevel)
-            .Must(v => string.IsNullOrWhiteSpace(v)
-                       || AllowedRiskLevels.Contains(v, StringComparer.OrdinalIgnoreCase))
-            .WithMessage($"Risk_Level must be one of: {string.Join(", ", AllowedRiskLevels)} (or empty).");
 
         // ---------------------------------------------------------------
         // Restoration fields — format validation when present

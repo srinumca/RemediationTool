@@ -41,26 +41,8 @@ public static class InboundLayoutColumns
     public const string OriginalFileLocation = "Original_File_Location";
     public const string QuarantineDate = "Quarantine_Date";
 
-    public const string LastModifiedDate = "Last_Modified_Date";
-    public const string CreatedDate = "Created_Date";
-    public const string LastAccessedDate = "Last_Accessed_Date";
-
     public const string SiteOwner = "Site_Owner";
     public const string FileOwner = "File_Owner";
-    public const string BusinessUnit = "Business_Unit";
-    public const string Division = "Division";
-    public const string Department = "Department";
-    public const string Region = "Region";
-    public const string Country = "Country";
-
-    public const string PolicyName = "Policy_Name";
-    public const string PolicyId = "Policy_ID";
-    public const string FindingReason = "Finding_Reason";
-    public const string RiskLevel = "Risk_Level";
-    public const string SensitivityLabel = "Sensitivity_Label";
-
-    public const string DetectionDate = "Detection_Date";
-    public const string RecommendedAction = "Recommended_Action";
 
     // =========================================================================
     // RESTORATION WORKFLOW COLUMNS
@@ -103,23 +85,8 @@ public static class InboundLayoutColumns
         FindingFileSize,
         OriginalFileLocation,
         QuarantineDate,
-        LastModifiedDate,
-        CreatedDate,
-        LastAccessedDate,
         SiteOwner,
         FileOwner,
-        BusinessUnit,
-        Division,
-        Department,
-        Region,
-        Country,
-        PolicyName,
-        PolicyId,
-        FindingReason,
-        RiskLevel,
-        SensitivityLabel,
-        DetectionDate,
-        RecommendedAction,
         RestorationTicketIdentifier,
         RestorationRequestorEmail,
         RestorationComment

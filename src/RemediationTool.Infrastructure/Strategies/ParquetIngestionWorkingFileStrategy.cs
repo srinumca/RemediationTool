@@ -66,26 +66,9 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             await rg.WriteAsync(GetField(schema, "OriginatingDataSystem"), validFindings.Select(x => NullToEmpty(x.OriginatingDataSystem)).ToArray());
             await rg.WriteAsync(GetField(schema, "OriginatingVendorTool"), validFindings.Select(x => NullToEmpty(x.OriginatingVendorTool)).ToArray());
 
-            await rg.WriteAsync<DateTime>(GetField(schema, "LastModifiedDateUtc"), validFindings.Select(x => x.LastModifiedDateUtc ?? DateTime.MinValue).ToArray());
-            await rg.WriteAsync<DateTime>(GetField(schema, "CreatedDateUtc"), validFindings.Select(x => x.CreatedDateUtc ?? DateTime.MinValue).ToArray());
-            await rg.WriteAsync<DateTime>(GetField(schema, "LastAccessedDateUtc"), validFindings.Select(x => x.LastAccessedDateUtc ?? DateTime.MinValue).ToArray());
 
             await rg.WriteAsync(GetField(schema, "SiteOwner"), validFindings.Select(x => NullToEmpty(x.SiteOwner)).ToArray());
             await rg.WriteAsync(GetField(schema, "FileOwner"), validFindings.Select(x => NullToEmpty(x.FileOwner)).ToArray());
-            await rg.WriteAsync(GetField(schema, "BusinessUnit"), validFindings.Select(x => NullToEmpty(x.BusinessUnit)).ToArray());
-            await rg.WriteAsync(GetField(schema, "Division"), validFindings.Select(x => NullToEmpty(x.Division)).ToArray());
-            await rg.WriteAsync(GetField(schema, "Department"), validFindings.Select(x => NullToEmpty(x.Department)).ToArray());
-            await rg.WriteAsync(GetField(schema, "Region"), validFindings.Select(x => NullToEmpty(x.Region)).ToArray());
-            await rg.WriteAsync(GetField(schema, "Country"), validFindings.Select(x => NullToEmpty(x.Country)).ToArray());
-            await rg.WriteAsync(GetField(schema, "PolicyName"), validFindings.Select(x => NullToEmpty(x.PolicyName)).ToArray());
-            await rg.WriteAsync(GetField(schema, "PolicyId"), validFindings.Select(x => NullToEmpty(x.PolicyId)).ToArray());
-            await rg.WriteAsync(GetField(schema, "FindingReason"), validFindings.Select(x => NullToEmpty(x.FindingReason)).ToArray());
-            await rg.WriteAsync(GetField(schema, "RiskLevel"), validFindings.Select(x => NullToEmpty(x.RiskLevel)).ToArray());
-            await rg.WriteAsync(GetField(schema, "SensitivityLabel"), validFindings.Select(x => NullToEmpty(x.SensitivityLabel)).ToArray());
-
-            await rg.WriteAsync<DateTime>(GetField(schema, "DetectionDateUtc"), validFindings.Select(x => x.DetectionDateUtc ?? DateTime.MinValue).ToArray());
-
-            await rg.WriteAsync(GetField(schema, "RecommendedAction"), validFindings.Select(x => NullToEmpty(x.RecommendedAction)).ToArray());
             await rg.WriteAsync(GetField(schema, "OriginalFileLocation"), validFindings.Select(x => NullToEmpty(x.OriginalFileLocation)).ToArray());
 
             await rg.WriteAsync<DateTime>(GetField(schema, "QuarantineDateUtc"), validFindings.Select(x => x.QuarantineDateUtc ?? DateTime.MinValue).ToArray());
@@ -235,26 +218,8 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
                     OriginatingDataSystem = NullIfEmpty(originatingDataSystems[i]),
                     OriginatingVendorTool = NullIfEmpty(originatingVendorTools[i]),
 
-                    LastModifiedDateUtc = ToNullableDate(lastModifiedDates[i]),
-                    CreatedDateUtc = ToNullableDate(createdDates[i]),
-                    LastAccessedDateUtc = ToNullableDate(lastAccessedDates[i]),
-
                     SiteOwner = NullIfEmpty(siteOwners[i]),
                     FileOwner = NullIfEmpty(fileOwners[i]),
-                    BusinessUnit = NullIfEmpty(businessUnits[i]),
-                    Division = NullIfEmpty(divisions[i]),
-                    Department = NullIfEmpty(departments[i]),
-                    Region = NullIfEmpty(regions[i]),
-                    Country = NullIfEmpty(countries[i]),
-                    PolicyName = NullIfEmpty(policyNames[i]),
-                    PolicyId = NullIfEmpty(policyIds[i]),
-                    FindingReason = NullIfEmpty(findingReasons[i]),
-                    RiskLevel = NullIfEmpty(riskLevels[i]),
-                    SensitivityLabel = NullIfEmpty(sensitivityLabels[i]),
-
-                    DetectionDateUtc = ToNullableDate(detectionDates[i]),
-
-                    RecommendedAction = NullIfEmpty(recommendedActions[i]),
                     OriginalFileLocation = NullIfEmpty(originalFileLocations[i]),
 
                     QuarantineDateUtc = ToNullableDate(quarantineDates[i]),

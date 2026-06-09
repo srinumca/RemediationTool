@@ -51,17 +51,17 @@ public class QuarantineService
             {
                 _logger.LogInformation("Processing: {File}", file.FindingFileName);
 
-                // Retention check — skip if modified within the last 10 years
-                if (file.LastModifiedDateUtc.HasValue
-                    && file.LastModifiedDateUtc.Value > DateTime.UtcNow.AddYears(-RetentionYears))
-                {
-                    file.FindingType = FindingType.NotObsolete.ToString();
-                    file.LastUpdateDateUtc = DateTime.UtcNow;
-                    _repository.Update(file);
+                //// Retention check — skip if modified within the last 10 years
+                //if (file.LastModifiedDateUtc.HasValue
+                //    && file.LastModifiedDateUtc.Value > DateTime.UtcNow.AddYears(-RetentionYears))
+                //{
+                //    file.FindingType = FindingType.NotObsolete.ToString();
+                //    file.LastUpdateDateUtc = DateTime.UtcNow;
+                //    _repository.Update(file);
 
-                    _logger.LogWarning("Skipped (retention not met): {File}", file.FindingFileName);
-                    continue;
-                }
+                //    _logger.LogWarning("Skipped (retention not met): {File}", file.FindingFileName);
+                //    continue;
+                //}
 
                 // Resolve full source path
                 var sourcePath = Path.Combine(Directory.GetCurrentDirectory(), file.CurrentFileLocation);

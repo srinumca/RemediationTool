@@ -23,7 +23,6 @@ public class ReportService
                 //FindingType = x.FindingType,
                 CurrentFileLocation = x.CurrentFileLocation,
                 OriginalFileLocation = x.OriginalFileLocation,
-                LastModifiedDateUtc = x.LastModifiedDateUtc,
                 QuarantineDateUtc = x.QuarantineDateUtc,
                 RestorationDateUtc = x.RestorationDateUtc,
                 DeletionDateUtc = x.DeletionDateUtc,
@@ -47,10 +46,8 @@ public class ReportService
             .Select(x => new FileReportDto
             {
                 FindingFileName = x.FindingFileName,
-                //FindingType = x.FindingType,
                 CurrentFileLocation = x.CurrentFileLocation,
                 OriginalFileLocation = x.OriginalFileLocation,
-                LastModifiedDateUtc = x.LastModifiedDateUtc,
                 QuarantineDateUtc = x.QuarantineDateUtc,
                 RestorationDateUtc = x.RestorationDateUtc,
                 DeletionDateUtc = x.DeletionDateUtc,
