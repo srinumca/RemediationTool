@@ -8,6 +8,8 @@ using RemediationTool.Infrastructure;
 using RemediationTool.Infrastructure.DynamoDB;
 using RemediationTool.Infrastructure.Repositories;
 using RemediationTool.Infrastructure.Strategies;
+using Amazon.DynamoDBv2;
+using RemediationTool.Infrastructure.DynamoDB;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,6 +27,11 @@ builder.Services.AddValidatorsFromAssemblyContaining<FileFindingValidator>();
 
 builder.Services.Configure<IngestionProcessingOptions>(
     builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
+
+builder.Services.Configure<DynamoDbOptions>(
+    builder.Configuration.GetSection(DynamoDbOptions.SectionName));
+
+builder.Services.AddAWSService<IAmazonDynamoDB>();
 
 // ---------------------------------------------------------------------------
 // AWS clients — lazy registration, SSO-aware
@@ -86,7 +93,11 @@ builder.Services.AddScoped<QuarantineService>();
 builder.Services.AddScoped<RestoreService>();
 builder.Services.AddScoped<DeleteService>();
 builder.Services.AddScoped<ReportService>();
-
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 // ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
@@ -99,5 +110,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseAuthorization();
+app.UseStaticFiles();
+app.UseDefaultFiles();
 app.MapControllers();
 app.Run();

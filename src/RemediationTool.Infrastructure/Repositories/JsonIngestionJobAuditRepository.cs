@@ -25,7 +25,7 @@ public class JsonIngestionJobAuditRepository : IIngestionJobAuditRepository
 
         if (!File.Exists(_filePath))
         {
-            File.WriteAllText(_filePath, "[]");
+            JsonFileHelper.WriteAllText(_filePath, "[]");
         }
     }
 
@@ -77,7 +77,10 @@ public class JsonIngestionJobAuditRepository : IIngestionJobAuditRepository
 
     private List<IngestionJobAudit> ReadAllInternal()
     {
-        var json = File.ReadAllText(_filePath);
+        var json = JsonFileHelper.ReadAllText(_filePath);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<IngestionJobAudit>();
 
         return JsonSerializer.Deserialize<List<IngestionJobAudit>>(
                    json,
@@ -98,6 +101,6 @@ public class JsonIngestionJobAuditRepository : IIngestionJobAuditRepository
                 Converters = { new JsonStringEnumConverter() }
             });
 
-        File.WriteAllText(_filePath, json);
+        JsonFileHelper.WriteAllText(_filePath, json);
     }
 }

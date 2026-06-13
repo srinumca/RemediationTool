@@ -1,4 +1,4 @@
-
+﻿
 <Project Sdk="Microsoft.NET.Sdk.Web">
 <PropertyGroup>
 <TargetFramework>net8.0</TargetFramework>
@@ -17,5 +17,10 @@
 <ItemGroup>
 <ProjectReference Include="..\RemediationTool.Application\RemediationTool.Application.csproj" />
 <ProjectReference Include="..\RemediationTool.Infrastructure\RemediationTool.Infrastructure.csproj" />
+</ItemGroup>
+<ItemGroup>
+  <Folder Include="storage\ingestion-working\2026\06\01\ING-20260601-023720-9317D4E0\" />
+  <Folder Include="storage\ingestion\processed\2026-06-01\ING-20260601-023720-9317D4E0\original\" />
+  <Folder Include="storage\ingestion\processed\2026-06-01\ING-20260601-023720-9317D4E0\summary\" />
 </ItemGroup>
 </Project>

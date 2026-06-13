@@ -24,7 +24,7 @@ public class JsonRejectedRowRepository : IRejectedRowRepository
 
         if (!File.Exists(_filePath))
         {
-            File.WriteAllText(_filePath, "[]");
+            JsonFileHelper.WriteAllText(_filePath, "[]");
         }
     }
 
@@ -58,7 +58,10 @@ public class JsonRejectedRowRepository : IRejectedRowRepository
 
     private List<RejectedRowDetail> ReadAllInternal()
     {
-        var json = File.ReadAllText(_filePath);
+        var json = JsonFileHelper.ReadAllText(_filePath);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<RejectedRowDetail>();
 
         return JsonSerializer.Deserialize<List<RejectedRowDetail>>(json)
                ?? new List<RejectedRowDetail>();
@@ -73,6 +76,6 @@ public class JsonRejectedRowRepository : IRejectedRowRepository
                 WriteIndented = true
             });
 
-        File.WriteAllText(_filePath, json);
+        JsonFileHelper.WriteAllText(_filePath, json);
     }
 }

@@ -92,9 +92,9 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
     }
 
     public async Task<List<FileFinding>> ReadAfterAsync(
-        string workingFilePath,
-        int lastProcessedRecordCount,
-        CancellationToken cancellationToken = default)
+      string workingFilePath,
+      int lastProcessedRecordCount,
+      CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(workingFilePath))
             throw new ArgumentException("Working file path is required.", nameof(workingFilePath));
@@ -147,10 +147,8 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             var ingestionJobIds = await ReadStringAsync("IngestionJobId");
             var inboundFileNames = await ReadStringAsync("InboundFileName");
             var userNames = await ReadStringAsync("UserName");
-
             var loadDates = await ReadDateTimeAsync("LoadDateUtc");
             var lastUpdateDates = await ReadDateTimeAsync("LastUpdateDateUtc");
-
             var findingFileNames = await ReadStringAsync("FindingFileName");
             var findingFileFormats = await ReadStringAsync("FindingFileFormat");
             var findingFileSizes = await ReadLongAsync("FindingFileSizeBytes");
@@ -158,32 +156,11 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             var findingTypes = await ReadStringAsync("FindingType");
             var originatingDataSystems = await ReadStringAsync("OriginatingDataSystem");
             var originatingVendorTools = await ReadStringAsync("OriginatingVendorTool");
-
-            var lastModifiedDates = await ReadDateTimeAsync("LastModifiedDateUtc");
-            var createdDates = await ReadDateTimeAsync("CreatedDateUtc");
-            var lastAccessedDates = await ReadDateTimeAsync("LastAccessedDateUtc");
-
             var siteOwners = await ReadStringAsync("SiteOwner");
             var fileOwners = await ReadStringAsync("FileOwner");
-            var businessUnits = await ReadStringAsync("BusinessUnit");
-            var divisions = await ReadStringAsync("Division");
-            var departments = await ReadStringAsync("Department");
-            var regions = await ReadStringAsync("Region");
-            var countries = await ReadStringAsync("Country");
-            var policyNames = await ReadStringAsync("PolicyName");
-            var policyIds = await ReadStringAsync("PolicyId");
-            var findingReasons = await ReadStringAsync("FindingReason");
-            var riskLevels = await ReadStringAsync("RiskLevel");
-            var sensitivityLabels = await ReadStringAsync("SensitivityLabel");
-
-            var detectionDates = await ReadDateTimeAsync("DetectionDateUtc");
-
-            var recommendedActions = await ReadStringAsync("RecommendedAction");
             var originalFileLocations = await ReadStringAsync("OriginalFileLocation");
-
             var quarantineDates = await ReadDateTimeAsync("QuarantineDateUtc");
-
-            var restorationTicketIdentifiers = await ReadStringAsync("RestorationTicketIdentifier");
+            var restorationTicketIds = await ReadStringAsync("RestorationTicketIdentifier");
             var restorationRequestorEmails = await ReadStringAsync("RestorationRequestorEmail");
             var restorationComments = await ReadStringAsync("RestorationComment");
             var dataSystems = await ReadStringAsync("DataSystem");
@@ -198,36 +175,27 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
                 allFindings.Add(new FileFinding
                 {
                     Id = Guid.TryParse(ids[i], out var parsedId) ? parsedId : Guid.NewGuid(),
-
                     RecordVersionId = NullIfEmpty(recordVersionIds[i]),
                     SourceRecordId = NullIfEmpty(sourceRecordIds[i]),
                     IngestionJobId = NullIfEmpty(ingestionJobIds[i]),
                     InboundFileName = NullIfEmpty(inboundFileNames[i]),
                     UserName = NullIfEmpty(userNames[i]),
-
                     LoadDateUtc = loadDates[i],
                     LastUpdateDateUtc = lastUpdateDates[i],
-
                     FindingFileName = NullIfEmpty(findingFileNames[i]) ?? string.Empty,
                     FindingFileFormat = NullIfEmpty(findingFileFormats[i]),
                     FindingFileSizeBytes = findingFileSizes[i] == 0L ? null : findingFileSizes[i],
                     CurrentFileLocation = NullIfEmpty(currentFileLocations[i]),
-
                     FindingType = parsedFindingType.ToString(),
-
                     OriginatingDataSystem = NullIfEmpty(originatingDataSystems[i]),
                     OriginatingVendorTool = NullIfEmpty(originatingVendorTools[i]),
-
                     SiteOwner = NullIfEmpty(siteOwners[i]),
                     FileOwner = NullIfEmpty(fileOwners[i]),
                     OriginalFileLocation = NullIfEmpty(originalFileLocations[i]),
-
                     QuarantineDateUtc = ToNullableDate(quarantineDates[i]),
-
-                    RestorationTicketIdentifier = NullIfEmpty(restorationTicketIdentifiers[i]),
+                    RestorationTicketIdentifier = NullIfEmpty(restorationTicketIds[i]),
                     RestorationRequestorEmail = NullIfEmpty(restorationRequestorEmails[i]),
                     RestorationComment = NullIfEmpty(restorationComments[i]),
-
                     DataSystem = NullIfEmpty(dataSystems[i]) ?? string.Empty
                 });
             }
