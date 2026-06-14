@@ -53,8 +53,12 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                IndexName = "JobId-ErrorDateUtc-index",
-                KeyConditionExpression = "JobId = :jobId",
+                IndexName = "jobId-errorDateUtc-index",
+                KeyConditionExpression = "#jobId = :jobId",
+                ExpressionAttributeNames = new Dictionary<string, string>
+                {
+                    ["#jobId"] = "jobId"
+                },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId }

@@ -40,7 +40,7 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue>
             {
-                ["Id"] = new AttributeValue { S = id.ToString() }
+                ["id"] = new AttributeValue { S = id.ToString() }
             }
         }).GetAwaiter().GetResult();
 
@@ -72,8 +72,12 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                IndexName = "FindingType-LoadDateUtc-index",
-                KeyConditionExpression = "FindingType = :ft",
+                IndexName = "findingType-loadDateUtc-index",
+                KeyConditionExpression = "#ft = :ft",
+                ExpressionAttributeNames = new Dictionary<string, string>
+                {
+                    ["#ft"] = "FindingType"
+                },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":ft"] = new AttributeValue { S = findingType.ToString() }
@@ -135,7 +139,11 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             {
                 TableName = _tableName,
                 IndexName = "SourceRecordId-LoadDateUtc-index",
-                KeyConditionExpression = "SourceRecordId = :sr",
+                KeyConditionExpression = "#sr = :sr",
+                ExpressionAttributeNames = new Dictionary<string, string>
+                {
+                    ["#sr"] = "SourceRecordId"
+                },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":sr"] = new AttributeValue { S = sourceRecordId }
@@ -165,8 +173,9 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                IndexName = "IngestionJobId-LoadDateUtc-index",
-                KeyConditionExpression = "IngestionJobId = :jid",
+                IndexName = "jobId-loadDateUtc-index",
+                KeyConditionExpression = "#jobId = :jobId",
+                ExpressionAttributeNames = { ["#jobId"] = "jobId" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jid"] = new AttributeValue { S = ingestionJobId }

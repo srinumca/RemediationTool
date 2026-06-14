@@ -29,7 +29,7 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue>
             {
-                ["JobId"] = new AttributeValue { S = jobId }
+                ["jobId"] = new AttributeValue { S = jobId }
             }
         }).GetAwaiter().GetResult();
 

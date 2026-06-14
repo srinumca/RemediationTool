@@ -85,7 +85,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                KeyConditionExpression = "JobId = :jobId AND SequenceNumber > :lastSeq",
+                KeyConditionExpression = "jobId = :jobId AND SequenceNumber > :lastSeq",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId },
@@ -118,7 +118,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         var response = _dynamoDb.QueryAsync(new QueryRequest
         {
             TableName = _tableName,
-            KeyConditionExpression = "JobId = :jobId",
+            KeyConditionExpression = "jobId = :jobId",
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {
                 [":jobId"] = new AttributeValue { S = jobId }
@@ -145,12 +145,12 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                KeyConditionExpression = "JobId = :jobId",
+                KeyConditionExpression = "jobId = :jobId",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId }
                 },
-                ProjectionExpression = "JobId, SequenceNumber",
+                ProjectionExpression = "jobId, SequenceNumber",
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 

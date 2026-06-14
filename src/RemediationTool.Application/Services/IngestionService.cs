@@ -141,7 +141,7 @@ public class IngestionService : IIngestionService
             response.SuccessCount = findings.Count(x => x.IsValid);
 
             response.FindingTypeCounts = findings.Where(x => x.IsValid)
-                .GroupBy(x => x.FindingType.ToString(),StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => x.FindingType.ToString(), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.Count());
 
             response.ValidationFailureCount = response.RejectCount;
@@ -773,9 +773,9 @@ public class IngestionService : IIngestionService
     }
 
     private void UpdateJobAudit(
-     IngestionJobAudit audit,
-     IngestionUploadResponse response,
-     string? errorMessage = null)
+ IngestionJobAudit audit,
+ IngestionUploadResponse response,
+ string? errorMessage = null)
     {
         audit.EndTimestampUtc = response.CompletedAtUtc;
         audit.SourceSystem = response.SourceSystem;
@@ -786,15 +786,20 @@ public class IngestionService : IIngestionService
         audit.SuccessCount = response.SuccessCount;
         audit.RejectCount = response.RejectCount;
         audit.ValidationFailureCount = response.ValidationFailureCount;
+        audit.Status = response.Status;
+        audit.ArchivedFilePath = response.ArchivedFilePath;
+        audit.ProcessingSummaryPath = response.ProcessingSummaryPath;
 
-        // FindingType breakdown — counts of valid records per type in this job.
-        // Populates FindingTypeCounts only when we have access to the valid findings
-        // via the response's RejectedRows complement. We derive from the response
-        // SuccessCount total; however the per-type breakdown must come from the
-        // FindingTypeCounts already set on the response if available, otherwise
-        // we leave it as-is (it was already populated before this call).
+        if (errorMessage != null)
+        {
+            audit.ErrorMessage = errorMessage;
+            audit.FailureReason = errorMessage;
+        }
+
         if (response.FindingTypeCounts != null && response.FindingTypeCounts.Count > 0)
             audit.FindingTypeCounts = response.FindingTypeCounts;
+
+        _jobAuditRepository.Update(audit);
     }
 
     private void PersistRejectedRows(string jobId, string inboundFileName, List<RejectedRowSummary> rejectedRows)
