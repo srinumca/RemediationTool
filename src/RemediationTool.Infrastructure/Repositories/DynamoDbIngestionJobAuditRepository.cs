@@ -7,6 +7,12 @@ using RemediationTool.Infrastructure.DynamoDB;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
+/// <summary>
+/// DynamoDB implementation of IIngestionJobAuditRepository.
+/// Table: gfr-file-metadata-dev
+/// Primary key: jobId (HASH) — set to same value as ReportUid.
+/// All attribute names are camelCase.
+/// </summary>
 public class DynamoDbIngestionJobAuditRepository : IIngestionJobAuditRepository
 {
     private readonly IAmazonDynamoDB _dynamoDb;
@@ -43,6 +49,8 @@ public class DynamoDbIngestionJobAuditRepository : IIngestionJobAuditRepository
 
     public IngestionJobAudit? GetByJobId(string jobId)
     {
+        if (string.IsNullOrWhiteSpace(jobId)) return null;
+
         var response = _dynamoDb.GetItemAsync(new GetItemRequest
         {
             TableName = _tableName,

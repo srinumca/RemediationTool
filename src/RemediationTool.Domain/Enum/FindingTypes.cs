@@ -1,50 +1,90 @@
-﻿using System.Text.Json.Serialization;
-
-namespace RemediationTool.Domain.Enums;
+﻿namespace RemediationTool.Application.Constants;
 
 /// <summary>
-/// Represents the lifecycle state of a file finding, as defined in the Data Model specification.
-/// These values are stored as their string representation (e.g. "Obsolete") for human-readable
-/// persistence in JSON and DynamoDB, and for direct mapping from inbound CSV/XLSX files.
+/// Finding type constants representing the EDG classification
+/// of each file record as received in the inbound CSV/XLSX.
+///
+/// These values come directly from the EDG report — they are
+/// NOT the same as FileStatus (which represents the GFR workflow stage).
+///
+/// FindingType = what EDG says about the file
+/// FileStatus  = what GFR is doing about it
+///
+/// Extensible for future sources (Confluence, SharePoint, etc.)
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum FindingType
+public static class FindingTypes
 {
-    /// <summary>
-    /// File has been identified as exceeding the retention threshold (10+ years).
-    /// This is the initial state set by the source scanning tool (e.g. Securiti.ai).
-    /// </summary>
-    Obsolete,
+    // -------------------------------------------------------------------------
+    // Core EDG finding types
+    // -------------------------------------------------------------------------
+
+    /// <summary>File exceeds retention threshold — primary input finding type.</summary>
+    public const string Obsolete = "Obsolete";
+
+    /// <summary>File already quarantined by a previous process.</summary>
+    public const string Quarantined = "Quarantined";
+
+    /// <summary>File has been restored from quarantine.</summary>
+    public const string Restored = "Restored";
+
+    /// <summary>File has been permanently deleted.</summary>
+    public const string Deleted = "Deleted";
+
+    /// <summary>File was evaluated but found to not be obsolete.</summary>
+    public const string NotObsolete = "Not Obsolete";
+
+    /// <summary>File has been explicitly excluded from remediation.</summary>
+    public const string Exclusion = "Exclusion";
+
+    // -------------------------------------------------------------------------
+    // Extended finding types — added for GFR UI alignment
+    // -------------------------------------------------------------------------
+
+    /// <summary>File is pending quarantine (waiting to be processed by DataSync).</summary>
+    public const string TotalPendingQuarantined = "TotalPendingQuarantined";
+
+    /// <summary>File is being restored — restoration workflow in progress.</summary>
+    public const string Restoration = "Restoration";
+
+    /// <summary>File has been flagged as an exception.</summary>
+    public const string Exception = "Exception";
+
+    /// <summary>File encountered an error during processing.</summary>
+    public const string Error = "Error";
+
+    // -------------------------------------------------------------------------
+    // All allowed values — used by validator
+    // -------------------------------------------------------------------------
+
+    public static readonly IReadOnlyList<string> AllAllowedTypes = new[]
+    {
+        Obsolete,
+        Quarantined,
+        Restored,
+        Deleted,
+        NotObsolete,
+        Exclusion,
+        TotalPendingQuarantined,
+        Restoration,
+        Exception,
+        Error
+    };
 
     /// <summary>
-    /// File has been moved to the centralised quarantine location.
-    /// A breadcrumb/stub file has been placed at the original path.
+    /// Maps a FindingType to the initial FileStatus that should be
+    /// assigned when a record is first ingested.
     /// </summary>
-    Quarantined,
-
-    /// <summary>
-    /// File has been restored from quarantine back to its original location.
-    /// The breadcrumb file has been removed.
-    /// </summary>
-    Restored,
-
-    /// <summary>
-    /// File has been permanently and securely deleted (hard delete) after the
-    /// quarantine hold period expired. This action is irreversible.
-    /// </summary>
-    Deleted,
-
-    /// <summary>
-    /// File was evaluated for quarantine but found to no longer meet the obsolete
-    /// criteria at the time of processing (e.g. modified within the last year).
-    /// No action was taken.
-    /// </summary>
-    NotObsolete,
-
-    /// <summary>
-    /// File has been explicitly excluded from further remediation actions.
-    /// Used for business continuity exceptions raised via the UI.
-    /// The ExceptionDateUtc field is stamped when this state is set.
-    /// </summary>
-    Exclusion
+    public static FileStatus ToInitialFileStatus(string findingType) =>
+        findingType?.Trim() switch
+        {
+            var ft when ft.Equals(Obsolete, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.PendingQuarantine,
+            var ft when ft.Equals(TotalPendingQuarantined, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.PendingQuarantine,
+            var ft when ft.Equals(Quarantined, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.QuarantineComplete,
+            var ft when ft.Equals(Restoration, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.PendingRestore,
+            var ft when ft.Equals(Restored, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.RestorationComplete,
+            var ft when ft.Equals(Deleted, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.DeletionComplete,
+            var ft when ft.Equals(Exception, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.Exception,
+            var ft when ft.Equals(Error, StringComparison.OrdinalIgnoreCase) => RemediationTool.Domain.Enum.FileStatus.Error,
+            _ => RemediationTool.Domain.Enum.FileStatus.NotYetStarted
+        };
 }

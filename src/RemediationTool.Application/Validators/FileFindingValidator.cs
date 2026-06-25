@@ -1,30 +1,33 @@
 ﻿using FluentValidation;
+using RemediationTool.Application.Constants;
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Validators;
 
 /// <summary>
-/// FluentValidation validator for <see cref="FileFinding"/> records during ingestion.
+/// Row-level validation rules applied to every FileFinding during ingestion.
+/// A failing record is rejected and logged — it does NOT block other rows.
 ///
-/// Enforces all rules defined in the Inbound File Layout tab of the requirements specification.
-/// The FindingType enum replaces the previous string-array allowlist — invalid enum values
-/// are rejected at parse time during CSV/XLSX mapping before this validator even runs.
-///
-/// Validation is row-level: a failing record is rejected and logged, but does not
-/// block processing of other records in the same ingestion job.
+/// Rules are aligned with the Inbound File Layout specification.
+/// Extended to support all GFR finding types including
+/// TotalPendingQuarantined, Restoration, Exception, Error.
 /// </summary>
-public sealed class FileFindingValidator : AbstractValidator<FileFinding>
+public class FileFindingValidator : AbstractValidator<FileFinding>
 {
     private static readonly string[] AllowedDataSystems =
     {
         "SMB", "NFS", "M365", "OneDrive", "SharePoint"
     };
 
+    private static readonly string[] AllowedRiskLevels =
+    {
+        "Low", "Medium", "High", "Critical"
+    };
+
     public FileFindingValidator()
     {
         // ---------------------------------------------------------------
-        // Mandatory string fields — reject if null/empty
+        // Required string fields
         // ---------------------------------------------------------------
 
         RuleFor(x => x.FindingFileName)
@@ -57,32 +60,21 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
             .MaximumLength(100)
             .WithMessage("Originating_Vendor_Tool cannot exceed 100 characters.");
 
-        // DataSystem is mandatory per the Inbound File Layout spec.
-        // Identifies the specific NetApp drive path (more granular than OriginatingDataSystem).
-        RuleFor(x => x.DataSystem)
-            .NotEmpty()
-            .WithMessage("Data_System is required.")
-            .MaximumLength(512)
-            .WithMessage("Data_System cannot exceed 512 characters.");
-
         // ---------------------------------------------------------------
-        // FindingType — validated at enum level (invalid values rejected at parse time)
-        // Extra guard: FindingType must be a defined enum member
+        // FindingType — validated against all allowed values
         // ---------------------------------------------------------------
 
         RuleFor(x => x.FindingType)
-        .NotEmpty()
-        .WithMessage("Finding_Type is required.")
-        .Must(value => Enum.TryParse<FindingType>(
-            value?.Replace(" ", ""),
-            ignoreCase: true,
-            out _))
-        .WithMessage($"Finding_Type is invalid. Allowed values: {string.Join(", ", Enum.GetNames<FindingType>())}");
+            .NotEmpty()
+            .WithMessage("Finding_Type is required.")
+            .Must(v => FindingTypes.AllAllowedTypes.Contains(v, StringComparer.OrdinalIgnoreCase))
+            .WithMessage($"Finding_Type is invalid. Allowed values: {string.Join(", ", FindingTypes.AllAllowedTypes)}.");
+
         // ---------------------------------------------------------------
-        // Conditional rules for Quarantined records
+        // Conditional rules — Quarantined records
         // ---------------------------------------------------------------
 
-        When(x => x.FindingType == FindingType.Quarantined.ToString(), () =>
+        When(x => x.FindingType.Equals(FindingTypes.Quarantined, StringComparison.OrdinalIgnoreCase), () =>
         {
             RuleFor(x => x.OriginalFileLocation)
                 .NotEmpty()
@@ -94,27 +86,49 @@ public sealed class FileFindingValidator : AbstractValidator<FileFinding>
         });
 
         // ---------------------------------------------------------------
-        // Conditional rules for Exclusion records
-        // ---------------------------------------------------------------
-
-        When(x => x.FindingType == FindingType.Exclusion.ToString(), () =>
-        {
-            RuleFor(x => x.ExceptionDateUtc)
-                .NotNull()
-                .WithMessage("Exception_Date is required when Finding_Type is Exclusion.");
-        });
-
-        // ---------------------------------------------------------------
-        // Optional numeric fields — range checks when present
+        // Optional numeric fields
         // ---------------------------------------------------------------
 
         RuleFor(x => x.FindingFileSizeBytes)
             .GreaterThanOrEqualTo(0)
             .When(x => x.FindingFileSizeBytes.HasValue)
-            .WithMessage("Finding_File_Size must be greater than or equal to 0.");
+            .WithMessage("Finding_File_Size must be >= 0.");
 
         // ---------------------------------------------------------------
-        // Restoration fields — format validation when present
+        // Optional date fields — cannot be in the future
+        // ---------------------------------------------------------------
+
+        RuleFor(x => x.LastModifiedDateUtc)
+            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
+            .When(x => x.LastModifiedDateUtc.HasValue)
+            .WithMessage("Last_Modified_Date cannot be in the future.");
+
+        RuleFor(x => x.CreatedDateUtc)
+            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
+            .When(x => x.CreatedDateUtc.HasValue)
+            .WithMessage("Created_Date cannot be in the future.");
+
+        RuleFor(x => x.LastAccessedDateUtc)
+            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
+            .When(x => x.LastAccessedDateUtc.HasValue)
+            .WithMessage("Last_Accessed_Date cannot be in the future.");
+
+        RuleFor(x => x.DetectionDateUtc)
+            .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
+            .When(x => x.DetectionDateUtc.HasValue)
+            .WithMessage("Detection_Date cannot be in the future.");
+
+        // ---------------------------------------------------------------
+        // Optional enum-like fields
+        // ---------------------------------------------------------------
+
+        RuleFor(x => x.RiskLevel)
+            .Must(v => string.IsNullOrWhiteSpace(v) ||
+                       AllowedRiskLevels.Contains(v, StringComparer.OrdinalIgnoreCase))
+            .WithMessage($"Risk_Level must be one of: {string.Join(", ", AllowedRiskLevels)}.");
+
+        // ---------------------------------------------------------------
+        // Email format validation
         // ---------------------------------------------------------------
 
         RuleFor(x => x.RestorationRequestorEmail)
