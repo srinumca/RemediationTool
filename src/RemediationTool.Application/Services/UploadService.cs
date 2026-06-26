@@ -5,22 +5,15 @@ using RemediationTool.Application.Models;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
+using System.Text;
+using System.Text.Json;
 
 namespace RemediationTool.Application.Services;
 
 /// <summary>
 /// Upload Service — handles ONLY the file upload step.
-///
-/// Responsibilities:
-///   1. Validate the uploaded file (size, extension)
-///   2. Generate a unique ReportUID
-///   3. Save the file to S3: gfr-edg-reports/{yyyy}/{MM}/{reportUid}/filename.csv
-///   4. Save the metadata JSON to S3: gfr-edg-reports/{yyyy}/{MM}/{reportUid}/report-metadata.json
-///   5. Create a report record in DynamoDB (gfr-file-metadata-dev) with status = NotYetStarted
-///   6. Return 202 immediately with the ReportUID
-///
-/// Does NOT parse rows. Does NOT validate row data.
-/// That is IngestionService.IngestAsync(reportUid)'s job.
+/// Saves file to S3, creates DynamoDB record, returns 202 immediately.
+/// Does NOT parse or validate rows — that is IngestionService.IngestAsync()'s job.
 /// </summary>
 public class UploadService
 {
@@ -28,7 +21,7 @@ public class UploadService
     private readonly IIngestionJobAuditRepository _jobAuditRepository;
     private readonly ILogger<UploadService> _logger;
 
-    private const long MaxFileSizeBytes = 500 * 1024 * 1024; // 500 MB for large files
+    private const long MaxFileSizeBytes = 500 * 1024 * 1024; // 500 MB
     private static readonly string[] AllowedExtensions = { ".csv", ".xlsx" };
 
     public UploadService(
@@ -41,13 +34,8 @@ public class UploadService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Validates and uploads the file to S3, creates DynamoDB record.
-    /// Returns immediately — does NOT start row ingestion.
-    /// </summary>
     public async Task<UploadResponse> UploadAsync(IFormFile file)
     {
-        // Step 1: Validate file
         ValidateFile(file);
 
         var uploadedAtUtc = DateTime.UtcNow;
@@ -56,31 +44,24 @@ public class UploadService
         var fileSizeBytes = file.Length;
         var fileFormat = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
 
-        // Step 2: Build S3 paths
+        // Build S3 paths
         var s3FolderPath = IngestionArchivePathBuilder.BuildFolderPrefix(reportUid, uploadedAtUtc);
         var sourceFilePath = IngestionArchivePathBuilder.BuildOriginalFilePath(reportUid, inboundFileName, uploadedAtUtc);
         var metadataPath = IngestionArchivePathBuilder.BuildProcessingSummaryPath(reportUid, uploadedAtUtc);
 
         _logger.LogInformation(
-            "Upload started. ReportUID: {ReportUid}, File: {File}, Size: {Size} bytes, S3Folder: {Folder}",
-            reportUid, inboundFileName, fileSizeBytes, s3FolderPath);
+            "Upload started. ReportUid: {ReportUid}, File: {File}, Size: {Size} bytes",
+            reportUid, inboundFileName, fileSizeBytes);
 
-        // Step 3: Save source file to S3
+        // Save source file to S3
         using var fileStream = file.OpenReadStream();
         await _storage.UploadAsync(sourceFilePath, fileStream);
 
-        _logger.LogInformation(
-            "Source file saved to S3. ReportUID: {ReportUid}, Path: {Path}",
-            reportUid, sourceFilePath);
+        // Save metadata JSON to S3 (same folder)
+        await SaveMetadataJsonAsync(metadataPath, reportUid, inboundFileName,
+            fileSizeBytes, fileFormat, s3FolderPath, sourceFilePath, uploadedAtUtc);
 
-        // Step 4: Save metadata JSON to S3 (same folder)
-        var metadata = BuildMetadata(
-            reportUid, inboundFileName, fileSizeBytes,
-            fileFormat, s3FolderPath, sourceFilePath, uploadedAtUtc);
-
-        await SaveMetadataJsonAsync(metadataPath, metadata);
-
-        // Step 5: Create report record in DynamoDB with status = NotYetStarted
+        // Create DynamoDB record
         var jobAudit = new IngestionJobAudit
         {
             ReportUid = reportUid,
@@ -105,8 +86,8 @@ public class UploadService
         _jobAuditRepository.Add(jobAudit);
 
         _logger.LogInformation(
-            "Report record created in DynamoDB. ReportUID: {ReportUid}, Status: {Status}",
-            reportUid, jobAudit.Status);
+            "Upload complete. ReportUid: {ReportUid}, S3: {S3Path}",
+            reportUid, s3FolderPath);
 
         return new UploadResponse
         {
@@ -120,13 +101,10 @@ public class UploadService
             MetadataJsonPath = metadataPath,
             UploadedAtUtc = uploadedAtUtc,
             Status = IngestionJobStatus.Started,
-            Message = $"File uploaded successfully. ReportUID: {reportUid}. Ingestion will begin shortly."
+            Message = $"File uploaded. ReportUid: {reportUid}. Ingestion will begin shortly."
         };
     }
 
-    /// <summary>
-    /// Returns the current status of a report upload.
-    /// </summary>
     public UploadResponse? GetStatus(string reportUid)
     {
         var audit = _jobAuditRepository.GetByJobId(reportUid);
@@ -148,32 +126,26 @@ public class UploadService
         };
     }
 
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
-
     private static void ValidateFile(IFormFile? file)
     {
         if (file == null || file.Length == 0)
             throw new InvalidDataException("Uploaded file is required and cannot be empty.");
-
         if (file.Length > MaxFileSizeBytes)
             throw new InvalidDataException(
-                $"File size {file.Length / (1024 * 1024)}MB exceeds the maximum allowed size of {MaxFileSizeBytes / (1024 * 1024)}MB.");
-
+                $"File size exceeds the maximum {MaxFileSizeBytes / (1024 * 1024)}MB.");
         var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(ext))
-            throw new InvalidDataException("Uploaded file must have a valid extension.");
-
+            throw new InvalidDataException("File must have a valid extension.");
         if (!AllowedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
-            throw new InvalidDataException(
-                $"Unsupported file format '{ext}'. Only .csv and .xlsx files are allowed.");
+            throw new InvalidDataException($"Only .csv and .xlsx files are allowed.");
     }
 
-    private static object BuildMetadata(
-        string reportUid, string fileName, long fileSize,
-        string fileFormat, string s3Folder, string sourceFilePath,
-        DateTime uploadedAt) => new
+    private async Task SaveMetadataJsonAsync(
+        string s3Key, string reportUid, string fileName,
+        long fileSize, string fileFormat, string s3Folder,
+        string sourceFilePath, DateTime uploadedAt)
+    {
+        var metadata = new
         {
             reportUid,
             originalFileName = fileName,
@@ -183,17 +155,10 @@ public class UploadService
             sourceFilePath,
             uploadedBy = "system",
             uploadedAtUtc = uploadedAt,
-            status = "Uploaded",
-            ingestionStatus = "NotYetStarted"
+            status = "Uploaded"
         };
-
-    private async Task SaveMetadataJsonAsync(string s3Key, object metadata)
-    {
-        var json = System.Text.Json.JsonSerializer.Serialize(
-            metadata,
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        var json = JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true });
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
         await _storage.UploadAsync(s3Key, stream);
     }
 }

@@ -1,4 +1,5 @@
-﻿using RemediationTool.Domain.Enums;
+﻿using RemediationTool.Application.Constants;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Models;
 
@@ -13,7 +14,7 @@ public sealed class FileReportDto
     public string FindingFileName { get; init; } = string.Empty;
 
     /// <summary>Current lifecycle state of this finding.</summary>
-    public FindingType FindingType { get; init; }
+    public FindingTypes FindingType { get; init; }
 
     /// <summary>Current file path (quarantine path for Quarantined, restored path for Restored).</summary>
     public string CurrentFileLocation { get; init; } = string.Empty;

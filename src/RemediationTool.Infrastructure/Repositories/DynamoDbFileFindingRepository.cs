@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enum;
 using RemediationTool.Infrastructure.DynamoDB;
 
 namespace RemediationTool.Infrastructure.Repositories;
@@ -12,20 +11,19 @@ namespace RemediationTool.Infrastructure.Repositories;
 /// <summary>
 /// DynamoDB implementation of IFileFindingRepository.
 /// Table: gfr-file-findings-dev
-/// Primary key: id (HASH)
-/// GSIs:
-///   jobId-loadDateUtc-index          → query by reportUid/jobId
-///   findingType-loadDateUtc-index    → query by findingType
-///   dataSystem-loadDateUtc-index     → query by dataSystem
-///   sourceRecordId-loadDateUtc-index → query by sourceRecordId
-/// All attribute names are camelCase.
+/// Primary key: id (HASH) — camelCase
+/// GSIs (all camelCase):
+///   jobId-loadDateUtc-index
+///   findingType-loadDateUtc-index
+///   dataSystem-loadDateUtc-index
+///   sourceRecordId-loadDateUtc-index
 /// </summary>
 public class DynamoDbFileFindingRepository : IFileFindingRepository
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
     private readonly ILogger<DynamoDbFileFindingRepository> _logger;
-    private const int DynamoDbBatchLimit = 25;
+    private const int BatchLimit = 25;
 
     public DynamoDbFileFindingRepository(
         IAmazonDynamoDB dynamoDb,
@@ -37,9 +35,7 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         _logger = logger;
     }
 
-    // -------------------------------------------------------------------------
-    // WRITE OPERATIONS
-    // -------------------------------------------------------------------------
+    // ── Write ─────────────────────────────────────────────────────────────────
 
     public void Add(FileFinding finding)
     {
@@ -54,7 +50,7 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     {
         if (findings == null || findings.Count == 0) return;
 
-        foreach (var chunk in findings.Chunk(DynamoDbBatchLimit))
+        foreach (var chunk in findings.Chunk(BatchLimit))
         {
             var requests = chunk.Select(f => new WriteRequest
             {
@@ -64,25 +60,23 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             var remaining = new BatchWriteItemRequest
             {
                 RequestItems = new Dictionary<string, List<WriteRequest>>
-                {
-                    [_tableName] = requests
-                }
+                { [_tableName] = requests }
             };
 
             var attempts = 0;
             while (true)
             {
-                var response = _dynamoDb.BatchWriteItemAsync(remaining).GetAwaiter().GetResult();
-                if (!response.UnprocessedItems.Any()) break;
+                var resp = _dynamoDb.BatchWriteItemAsync(remaining).GetAwaiter().GetResult();
+                if (!resp.UnprocessedItems.Any()) break;
                 if (++attempts >= 5)
                 {
                     _logger.LogWarning(
                         "Giving up on {Count} unprocessed items after 5 retries.",
-                        response.UnprocessedItems.Values.Sum(l => l.Count));
+                        resp.UnprocessedItems.Values.Sum(l => l.Count));
                     break;
                 }
                 Thread.Sleep(TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempts)));
-                remaining = new BatchWriteItemRequest { RequestItems = response.UnprocessedItems };
+                remaining = new BatchWriteItemRequest { RequestItems = resp.UnprocessedItems };
             }
         }
     }
@@ -96,9 +90,7 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         }).GetAwaiter().GetResult();
     }
 
-    // -------------------------------------------------------------------------
-    // SINGLE RECORD LOOKUPS
-    // -------------------------------------------------------------------------
+    // ── Single-record lookups ─────────────────────────────────────────────────
 
     public FileFinding? GetById(Guid id)
     {
@@ -117,149 +109,60 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     }
 
     public FileFinding? GetLatestBySourceRecordId(string sourceRecordId)
-    {
-        return GetHistoryBySourceRecordId(sourceRecordId)
+        => GetHistoryBySourceRecordId(sourceRecordId)
             .OrderByDescending(f => f.LoadDateUtc)
             .FirstOrDefault();
-    }
 
-    // -------------------------------------------------------------------------
-    // FILTERED QUERIES — using GSIs
-    // -------------------------------------------------------------------------
+    // ── Filtered queries ──────────────────────────────────────────────────────
 
     public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
-    {
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
+        => QueryGsi("jobId-loadDateUtc-index", "#jobId", "jobId", ingestionJobId);
 
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                IndexName = "jobId-loadDateUtc-index",
-                KeyConditionExpression = "#jobId = :jobId",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#jobId"] = "jobId" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":jobId"] = new AttributeValue { S = ingestionJobId }
-                },
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            findings.AddRange(response.Items.Select(DynamoDbAttributeMap.ToFileFinding));
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
-        }
-        while (lastKey != null);
-
-        return findings;
-    }
-
-    public IReadOnlyList<FileFinding> GetLatestByFindingType(FindingType findingType)
-    {
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                IndexName = "findingType-loadDateUtc-index",
-                KeyConditionExpression = "#ft = :ft",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#ft"] = "findingType" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":ft"] = new AttributeValue { S = findingType.ToString() }
-                },
-                ScanIndexForward = false,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            findings.AddRange(response.Items.Select(DynamoDbAttributeMap.ToFileFinding));
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
-        }
-        while (lastKey != null);
-
-        return findings;
-    }
+    public IReadOnlyList<FileFinding> GetLatestByFindingType(string findingType)
+        => QueryGsi("findingType-loadDateUtc-index", "#ft", "findingType", findingType);
 
     public IReadOnlyList<FileFinding> GetLatestByDataSystem(string dataSystem)
-    {
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                IndexName = "dataSystem-loadDateUtc-index",
-                KeyConditionExpression = "#ds = :ds",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#ds"] = "dataSystem" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":ds"] = new AttributeValue { S = dataSystem }
-                },
-                ScanIndexForward = false,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            findings.AddRange(response.Items.Select(DynamoDbAttributeMap.ToFileFinding));
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
-        }
-        while (lastKey != null);
-
-        return findings;
-    }
+        => QueryGsi("dataSystem-loadDateUtc-index", "#ds", "dataSystem", dataSystem);
 
     public IReadOnlyList<FileFinding> GetHistoryBySourceRecordId(string sourceRecordId)
-    {
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
+        => QueryGsi("sourceRecordId-loadDateUtc-index", "#sr", "sourceRecordId",
+                    sourceRecordId, scanIndexForward: true);
 
+    // ── GetAll (legacy — used by ReportService) ───────────────────────────────
+
+    public List<FileFinding> GetAll()
+    {
+        var all = new List<FileFinding>();
+        Dictionary<string, AttributeValue>? lastKey = null;
         do
         {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
+            var resp = _dynamoDb.ScanAsync(new ScanRequest
             {
                 TableName = _tableName,
-                IndexName = "sourceRecordId-loadDateUtc-index",
-                KeyConditionExpression = "#sr = :sr",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#sr"] = "sourceRecordId" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":sr"] = new AttributeValue { S = sourceRecordId }
-                },
-                ScanIndexForward = true,
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 
-            findings.AddRange(response.Items.Select(DynamoDbAttributeMap.ToFileFinding));
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+            all.AddRange(resp.Items.Select(DynamoDbAttributeMap.ToFileFinding));
+            lastKey = resp.LastEvaluatedKey?.Count > 0 ? resp.LastEvaluatedKey : null;
         }
         while (lastKey != null);
-
-        return findings;
+        return all;
     }
 
-    // -------------------------------------------------------------------------
-    // PAGED QUERY
-    // -------------------------------------------------------------------------
+    // ── Paged query ───────────────────────────────────────────────────────────
 
     public PagedResult<FileFinding> GetLatestPaged(
         int pageSize,
         string? lastEvaluatedKey = null,
-        FindingType? findingType = null)
+        string? findingType = null)
     {
-        Dictionary<string, AttributeValue>? exclusiveStartKey = null;
+        Dictionary<string, AttributeValue>? startKey = null;
         if (!string.IsNullOrWhiteSpace(lastEvaluatedKey))
-            exclusiveStartKey = new Dictionary<string, AttributeValue>
-            {
-                ["id"] = new AttributeValue { S = lastEvaluatedKey }
-            };
+            startKey = new Dictionary<string, AttributeValue>
+            { ["id"] = new AttributeValue { S = lastEvaluatedKey } };
 
         ScanResponse response;
-        if (findingType.HasValue)
+        if (!string.IsNullOrWhiteSpace(findingType))
         {
             response = _dynamoDb.ScanAsync(new ScanRequest
             {
@@ -267,11 +170,9 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
                 FilterExpression = "#ft = :ft",
                 ExpressionAttributeNames = new Dictionary<string, string> { ["#ft"] = "findingType" },
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":ft"] = new AttributeValue { S = findingType.Value.ToString() }
-                },
+                { [":ft"] = new AttributeValue { S = findingType } },
                 Limit = pageSize,
-                ExclusiveStartKey = exclusiveStartKey
+                ExclusiveStartKey = startKey
             }).GetAwaiter().GetResult();
         }
         else
@@ -280,45 +181,29 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             {
                 TableName = _tableName,
                 Limit = pageSize,
-                ExclusiveStartKey = exclusiveStartKey
+                ExclusiveStartKey = startKey
             }).GetAwaiter().GetResult();
         }
 
         var items = response.Items.Select(DynamoDbAttributeMap.ToFileFinding).ToList();
-        var nextPageKey = response.LastEvaluatedKey?.Count > 0
-            ? response.LastEvaluatedKey["id"].S
-            : null;
+        var nextKey = response.LastEvaluatedKey?.Count > 0
+            ? response.LastEvaluatedKey["id"].S : null;
 
-        return new PagedResult<FileFinding> { Items = items, NextPageKey = nextPageKey };
+        return new PagedResult<FileFinding> { Items = items, NextPageKey = nextKey };
     }
 
-    // -------------------------------------------------------------------------
-    // AGGREGATE / COUNT
-    // -------------------------------------------------------------------------
+    // ── Aggregates ────────────────────────────────────────────────────────────
 
-    public IReadOnlyDictionary<FindingType, int> GetCountByFindingType()
+    public IReadOnlyDictionary<string, int> GetCountByFindingType()
     {
-        var counts = new Dictionary<FindingType, int>();
-        foreach (FindingType ft in Enum.GetValues<FindingType>())
-        {
-            var response = _dynamoDb.ScanAsync(new ScanRequest
-            {
-                TableName = _tableName,
-                FilterExpression = "#ft = :ft",
-                ExpressionAttributeNames = new Dictionary<string, string> { ["#ft"] = "findingType" },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":ft"] = new AttributeValue { S = ft.ToString() }
-                },
-                Select = Select.COUNT
-            }).GetAwaiter().GetResult();
-
-            counts[ft] = response.Count ?? 0;
-        }
+        var counts = new Dictionary<string, int>();
+        var all = GetAll();
+        foreach (var grp in all.GroupBy(f => f.FindingType))
+            counts[grp.Key] = grp.Count();
         return counts;
     }
 
-    public int CountByFindingType(FindingType findingType)
+    public int CountByFindingType(string findingType)
     {
         var response = _dynamoDb.ScanAsync(new ScanRequest
         {
@@ -326,12 +211,41 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             FilterExpression = "#ft = :ft",
             ExpressionAttributeNames = new Dictionary<string, string> { ["#ft"] = "findingType" },
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-            {
-                [":ft"] = new AttributeValue { S = findingType.ToString() }
-            },
+            { [":ft"] = new AttributeValue { S = findingType } },
             Select = Select.COUNT
         }).GetAwaiter().GetResult();
 
         return response.Count ?? 0;
+    }
+
+    // ── Private helper ────────────────────────────────────────────────────────
+
+    private IReadOnlyList<FileFinding> QueryGsi(
+        string indexName, string exprAttrName, string attrName,
+        string value, bool scanIndexForward = false)
+    {
+        var findings = new List<FileFinding>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var resp = _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _tableName,
+                IndexName = indexName,
+                KeyConditionExpression = $"{exprAttrName} = :val",
+                ExpressionAttributeNames = new Dictionary<string, string> { [exprAttrName] = attrName },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                { [":val"] = new AttributeValue { S = value } },
+                ScanIndexForward = scanIndexForward,
+                ExclusiveStartKey = lastKey
+            }).GetAwaiter().GetResult();
+
+            findings.AddRange(resp.Items.Select(DynamoDbAttributeMap.ToFileFinding));
+            lastKey = resp.LastEvaluatedKey?.Count > 0 ? resp.LastEvaluatedKey : null;
+        }
+        while (lastKey != null);
+
+        return findings;
     }
 }
