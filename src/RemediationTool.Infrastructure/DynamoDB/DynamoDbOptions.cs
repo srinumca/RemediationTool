@@ -21,6 +21,7 @@ public class DynamoDbOptions
     public string RejectedRowsTableName { get; set; } = "gfr-rejected-rows-dev";
     public string CheckpointsTableName { get; set; } = "gfr-ingestion-checkpoints-dev";
     public string StagedFindingsTableName { get; set; } = "gfr-ingestion-staged-findings-dev";
+    public string HistoryTableName { get; set; } = "gfr-finding-history-dev";
 
     // Removed: HistoryTableName — gfr-finding-history-dev not used
 }

@@ -1,12 +1,10 @@
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enum;
 
 namespace RemediationTool.Application.Repositories;
 
 /// <summary>
 /// Repository contract for FileFinding records.
-/// Matches the actual DynamoDbFileFindingRepository implementation.
-/// FindingType is stored and queried as a string — no enum required at the interface level.
+/// FindingType is string throughout — no enum dependency.
 /// </summary>
 public interface IFileFindingRepository
 {
@@ -35,6 +33,6 @@ public interface IFileFindingRepository
     IReadOnlyDictionary<string, int> GetCountByFindingType();
     int CountByFindingType(string findingType);
 
-    // ── Legacy compat (ReportService still uses this) ─────────────────────────
+    // ── Legacy — used by ReportService, QuarantineService, DeleteService ──────
     List<FileFinding> GetAll();
 }

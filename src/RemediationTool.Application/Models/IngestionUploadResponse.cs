@@ -2,11 +2,44 @@
 
 namespace RemediationTool.Application.Models;
 
+/// <summary>
+/// Response returned after a file upload and ingestion.
+/// ReportUid links S3 files to DynamoDB records to all finding rows.
+/// </summary>
 public class IngestionUploadResponse
 {
+    // ── Identity ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Unique ID for this EDG report upload.
+    /// Format: ING-{yyyyMMdd}-{HHmmss}-{random8}
+    /// Used as S3 folder name and DynamoDB primary key.
+    /// </summary>
+    public string ReportUid { get; set; } = string.Empty;
+
+    /// <summary>Same as ReportUid — kept for backward compatibility.</summary>
     public string JobId { get; set; } = string.Empty;
 
     public string InboundFileName { get; set; } = string.Empty;
+
+    // ── S3 paths ──────────────────────────────────────────────────────────────
+
+    /// <summary>S3 folder prefix: {yyyy}/{MM}/{reportUid}/</summary>
+    public string S3FolderPath { get; set; } = string.Empty;
+
+    /// <summary>Full S3 key of the uploaded source file.</summary>
+    public string? SourceFilePath { get; set; }
+
+    /// <summary>Full S3 key of report-metadata.json (same folder as source).</summary>
+    public string? MetadataJsonPath { get; set; }
+
+    /// <summary>Legacy alias for SourceFilePath.</summary>
+    public string? ArchivedFilePath { get; set; }
+
+    /// <summary>Legacy alias for MetadataJsonPath.</summary>
+    public string? ProcessingSummaryPath { get; set; }
+
+    // ── Status + counts ───────────────────────────────────────────────────────
 
     public IngestionJobStatus Status { get; set; }
 
@@ -19,10 +52,6 @@ public class IngestionUploadResponse
     public DateTime StartedAtUtc { get; set; }
 
     public DateTime? CompletedAtUtc { get; set; }
-
-    public string? ArchivedFilePath { get; set; }
-
-    public string? ProcessingSummaryPath { get; set; }
 
     public string Message { get; set; } = string.Empty;
 
@@ -37,6 +66,12 @@ public class IngestionUploadResponse
     public int ValidationFailureCount { get; set; }
 
     public List<RejectedRowSummary> RejectedRows { get; set; } = new();
+
+    // ── Finding type breakdown — drives dashboard stat cards ──────────────────
+
+    public Dictionary<string, int> FindingTypeCounts { get; set; } = new();
+
+    // ── Batch / checkpoint ────────────────────────────────────────────────────
 
     public int BatchSize { get; set; }
 
@@ -60,11 +95,11 @@ public class IngestionUploadResponse
 
     public string? CheckpointMessage { get; set; }
 
+    // ── Working file (Parquet — internal resume use) ──────────────────────────
+
     public string? WorkingFileFormat { get; set; }
 
     public string? WorkingFilePath { get; set; }
 
     public int WorkingFileRecordCount { get; set; }
-    // Count of successfully ingested records grouped by FindingType (Req 7 audit report).
-    public Dictionary<string, int> FindingTypeCounts { get; set; } = new();
 }

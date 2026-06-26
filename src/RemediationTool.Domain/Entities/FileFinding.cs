@@ -1,203 +1,159 @@
-using RemediationTool.Domain.Enums;
+using RemediationTool.Domain;
 
 namespace RemediationTool.Domain.Entities;
 
 /// <summary>
-/// Core domain entity representing a single file finding in the remediation data model.
-/// Field coverage is aligned 1:1 with the Data Model tab in the requirements specification.
-///
-/// Design principles:
-///   - Id is always system-generated. Never derived from inbound data.
-///   - SourceRecordId is a separate lineage field for traceability to the upstream source.
-///   - FindingType uses the strongly-typed FindingType enum (stored as string via JsonStringEnumConverter).
-///   - All date fields are UTC and nullable where the spec defines them as optional.
-///   - IsValid / IngestionErrorReason are ingestion-pipeline-only fields used during batch
-///     processing. They are NOT part of the spec Data Model and are NOT persisted to DynamoDB.
-///     They exist only to carry per-row validation state through the ingestion pipeline.
+/// Core domain entity representing a single file finding.
+/// FindingType is a plain string. Status tracks GFR workflow stage.
 /// </summary>
 public class FileFinding
 {
-    // =========================================================================
-    // SYSTEM-GENERATED FIELDS (set by the tool, never from inbound data)
-    // =========================================================================
-
-    /// <summary>
-    /// Internal unique identifier for this record version. Always system-generated.
-    /// Never sourced from inbound data. Maps to: ID (Data Model — system generated).
-    /// </summary>
+    // ── System-generated ─────────────────────────────────────────────────────
     public Guid Id { get; set; } = Guid.NewGuid();
-
-    /// <summary>
-    /// Unique version identifier for this specific row. Supports the append-only
-    /// (insert new row per state change) persistence pattern.
-    /// </summary>
     public string RecordVersionId { get; set; } = Guid.NewGuid().ToString("N");
-
-    /// <summary>
-    /// The ID value from the inbound source file ("ID" column). Stored for lineage
-    /// and traceability back to the upstream system. Never used as the internal primary key.
-    /// </summary>
     public string? SourceRecordId { get; set; }
-
-    /// <summary>The JobId of the ingestion job that loaded this record.</summary>
     public string? IngestionJobId { get; set; }
-
-    /// <summary>
-    /// Name of the inbound file that contained this record.
-    /// Maps to: Inbound_File_Name (Data Model — system generated).
-    /// </summary>
     public string InboundFileName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// UserID of the associate who initiated the ingestion, or "System" for automated jobs.
-    /// Maps to: UserName (Data Model — system generated).
-    /// </summary>
     public string UserName { get; set; } = "System";
-
-    /// <summary>
-    /// UTC timestamp when this record was first loaded into the remediation tool.
-    /// Maps to: Load_Date (Data Model — system generated).
-    /// </summary>
     public DateTime LoadDateUtc { get; set; } = DateTime.UtcNow;
-
-    /// <summary>
-    /// UTC timestamp of the most recent update to this record.
-    /// Set to LoadDateUtc on initial load; updated on every state change.
-    /// Maps to: Last_Update_Date (Data Model — system generated).
-    /// </summary>
     public DateTime LastUpdateDateUtc { get; set; } = DateTime.UtcNow;
 
-    // =========================================================================
-    // INBOUND FILE FIELDS (sourced from the inbound CSV/XLSX payload)
-    // =========================================================================
-
-    /// <summary>Name of the file (including extension) identified as out of compliance. Maps to: Finding_File_Name.</summary>
+    // ── Inbound file fields ───────────────────────────────────────────────────
     public string FindingFileName { get; set; } = string.Empty;
-
-    /// <summary>Format/extension of the file (e.g. doc, xls, pdf). Maps to: Finding File Format.</summary>
     public string FindingFileFormat { get; set; } = string.Empty;
-
-    /// <summary>File size in bytes. Null if not provided. Maps to: Finding File Size.</summary>
     public long? FindingFileSizeBytes { get; set; }
-
-    /// <summary>
-    /// The file path where the file is currently located.
-    /// For Quarantined files this holds the quarantine path.
-    /// For Restored files this holds the restored path.
-    /// Maps to: Current_File_Location.
-    /// </summary>
     public string CurrentFileLocation { get; set; } = string.Empty;
 
     /// <summary>
-    /// The lifecycle state of this file within the remediation workflow.
-    /// Allowed values: Obsolete, Quarantined, Restored, Deleted, NotObsolete, Exclusion.
-    /// Maps to: Finding_Type (Data Model).
+    /// EDG finding type — plain string.
+    /// Obsolete | Quarantined | Restoration | TotalPendingQuarantined |
+    /// Exception | Error | Deleted | Restored | NotObsolete | Exclusion
     /// </summary>
     public string FindingType { get; set; } = string.Empty;
 
-    /// <summary>
-    /// The specific NetApp drive path including parent folder
-    /// (e.g. dc1f7c2nasv3.es.ad.adp.com/enterprise).
-    /// More granular than OriginatingDataSystem — identifies the exact drive.
-    /// Maps to: Data_System (Inbound File Layout — mandatory).
-    /// </summary>
-    public string DataSystem { get; set; } = string.Empty;
-
-    /// <summary>Source data system type (e.g. SMB, NFS, M365). Maps to: Originating_Data_System.</summary>
     public string OriginatingDataSystem { get; set; } = string.Empty;
-
-    /// <summary>The tool that originally detected this finding (e.g. Securiti). Maps to: Originating_Vendor_Tool.</summary>
     public string OriginatingVendorTool { get; set; } = string.Empty;
+    public string? DataSystemPath { get; set; }
 
-    /// <summary>
-    /// The original SMB/NFS file path before quarantine.
-    /// Only populated for Quarantined files. Required when FindingType = Quarantined.
-    /// Maps to: Original_File_Location.
-    /// </summary>
+    // ── Optional metadata ─────────────────────────────────────────────────────
+    public DateTime? LastModifiedDateUtc { get; set; }
+    public DateTime? CreatedDateUtc { get; set; }
+    public DateTime? LastAccessedDateUtc { get; set; }
+    public DateTime? DetectionDateUtc { get; set; }
+    public string? SiteOwner { get; set; }
+    public string? FileOwner { get; set; }
+    public string? BusinessUnit { get; set; }
+    public string? Division { get; set; }
+    public string? Department { get; set; }
+    public string? Region { get; set; }
+    public string? Country { get; set; }
+    public string? PolicyName { get; set; }
+    public string? PolicyId { get; set; }
+    public string? FindingReason { get; set; }
+    public string? RiskLevel { get; set; }
+    public string? SensitivityLabel { get; set; }
+    public string? RecommendedAction { get; set; }
+
+    // ── Workflow fields ───────────────────────────────────────────────────────
     public string? OriginalFileLocation { get; set; }
-
-    /// <summary>UTC date the file was quarantined. Required when FindingType = Quarantined. Maps to: Quarantine_Date.</summary>
     public DateTime? QuarantineDateUtc { get; set; }
+    public DateTime? RestoredDateUtc { get; set; }
+    public DateTime? DeletedDateUtc { get; set; }
 
-    /// <summary>UTC date the file was restored from quarantine. Maps to: Restoration_Date.</summary>
-    public DateTime? RestorationDateUtc { get; set; }
-
-    /// <summary>
-    /// UTC date the file was marked as Exclusion via the UI exclusion workflow.
-    /// Stamped when FindingType is set to Exclusion.
-    /// Maps to: Exception_Date (Data Model).
-    /// </summary>
+    /// <summary>Date file was marked as Exclusion/Exception.</summary>
     public DateTime? ExceptionDateUtc { get; set; }
 
-    /// <summary>UTC date the file was permanently deleted. Maps to: Deletion_Date.</summary>
-    public DateTime? DeletionDateUtc { get; set; }
-
-    /// <summary>Associate name of the site or drive owner. Maps to: Site_Owner.</summary>
-    public string? SiteOwner { get; set; }
-
-    /// <summary>Associate name of the file owner. Maps to: File_Owner.</summary>
-    public string? FileOwner { get; set; }
-
-    
-
-      
-    // =========================================================================
-    // RESTORATION WORKFLOW FIELDS
-    // =========================================================================
-
-    /// <summary>
-    /// Ticket number/reference ID from the file restoration request (e.g. Jira ticket).
-    /// Maps to: Restoration Ticket Identifier (Data Model).
-    /// </summary>
     public string? RestorationTicketIdentifier { get; set; }
-
-    /// <summary>
-    /// ADP email address of the associate who requested restoration.
-    /// Maps to: Restoration Requestor Email (Data Model).
-    /// </summary>
     public string? RestorationRequestorEmail { get; set; }
-
-    /// <summary>
-    /// Free-form comment captured at the time of the restoration request (optional).
-    /// Maps to: Restoration_Comment (Data Model).
-    /// </summary>
     public string? RestorationComment { get; set; }
 
-    // =========================================================================
-    // ERROR TRACKING (operational errors during remediation actions)
-    // =========================================================================
+    // ── GFR workflow status ───────────────────────────────────────────────────
+    public FileStatus Status { get; set; } = FileStatus.NotYetStarted;
 
-    /// <summary>
-    /// Standardised error category describing why a remediation action failed.
-    /// Maps to: Error Category (Data Model tab). Uses the ErrorCategory taxonomy
-    /// from the Error Categories specification tab.
-    /// Only set when quarantine/restore/delete fails — not for ingestion validation failures.
-    /// </summary>
-    public ErrorCategory ErrorCategory { get; set; } = ErrorCategory.None;
-
-    /// <summary>
-    /// Free-form error detail message supplementing ErrorCategory.
-    /// Captures the specific exception message or system error description.
-    /// </summary>
-    public string? ErrorDetail { get; set; }
-
-    // =========================================================================
-    // INGESTION PIPELINE FIELDS (internal use only — NOT persisted to DynamoDB)
-    // These fields carry per-row state through the ingestion pipeline only.
-    // They are not part of the spec Data Model and must be excluded from
-    // DynamoDB persistence when that layer is implemented.
-    // =========================================================================
-
-    /// <summary>
-    /// True when this record passed all validation rules during ingestion.
-    /// Used internally by the ingestion pipeline to separate valid from rejected records.
-    /// Not persisted to DynamoDB.
-    /// </summary>
+    // ── Ingestion pipeline fields (NOT persisted to DynamoDB) ─────────────────
     public bool IsValid { get; set; } = true;
 
-    /// <summary>
-    /// Validation error message(s) for rejected records during ingestion.
-    /// Not persisted to DynamoDB — rejection detail is stored in RejectedRowDetail instead.
-    /// </summary>
+    /// <summary>Validation error message set during ingestion. Not stored in DynamoDB.</summary>
     public string IngestionErrorReason { get; set; } = string.Empty;
+
+    // ── Compatibility properties ───────────────────────────────────────────────
+    // Allow existing services to keep working without changes.
+
+    public string ErrorReason
+    {
+        get => IngestionErrorReason;
+        set => IngestionErrorReason = value ?? string.Empty;
+    }
+
+    public string FileName
+    {
+        get => FindingFileName;
+        set => FindingFileName = value ?? string.Empty;
+    }
+
+    public string FilePath
+    {
+        get => CurrentFileLocation;
+        set => CurrentFileLocation = value ?? string.Empty;
+    }
+
+    public string SourceSystem
+    {
+        get => OriginatingDataSystem;
+        set => OriginatingDataSystem = value ?? string.Empty;
+    }
+
+    public long FileSize
+    {
+        get => FindingFileSizeBytes ?? 0;
+        set => FindingFileSizeBytes = value;
+    }
+
+    public string? QuarantinePath
+    {
+        get => Status == FileStatus.QuarantineComplete ? CurrentFileLocation : null;
+        set => CurrentFileLocation = value ?? string.Empty;
+    }
+
+    public DateTime LastModifiedDate
+    {
+        get => LastModifiedDateUtc ?? DateTime.MinValue;
+        set => LastModifiedDateUtc = value;
+    }
+
+    public string? IngestionId
+    {
+        get => IngestionJobId;
+        set => IngestionJobId = value;
+    }
+
+    public string UploadedBy
+    {
+        get => UserName;
+        set => UserName = value ?? "System";
+    }
+
+    public DateTime LoadDate
+    {
+        get => LoadDateUtc;
+        set => LoadDateUtc = value;
+    }
+
+    public DateTime UpdatedDate
+    {
+        get => LastUpdateDateUtc;
+        set => LastUpdateDateUtc = value;
+    }
+
+    public DateTime? QuarantineDate
+    {
+        get => QuarantineDateUtc;
+        set => QuarantineDateUtc = value;
+    }
+
+    public string DataSystem
+    {
+        get => OriginatingDataSystem;
+        set => OriginatingDataSystem = value ?? string.Empty;
+    }
 }

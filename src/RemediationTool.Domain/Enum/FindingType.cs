@@ -1,12 +1,11 @@
 ﻿namespace RemediationTool.Application.Constants;
 
 /// <summary>
-/// Finding type string constants — values received from EDG inbound CSV/XLSX.
-/// Used by FileFindingValidator and throughout the ingestion pipeline.
-/// FindingType is stored and compared as a plain string (not an enum)
-/// for extensibility with future source systems.
+/// Finding type string constants matching values in the inbound CSV/XLSX.
+/// Stored and compared as plain strings throughout the system.
+/// No enum — allows easy extension for future source systems.
 /// </summary>
-public static class FindingTypes
+public static class FindingType
 {
     public const string Obsolete = "Obsolete";
     public const string Quarantined = "Quarantined";
@@ -19,7 +18,7 @@ public static class FindingTypes
     public const string Exception = "Exception";
     public const string Error = "Error";
 
-    /// <summary>All allowed Finding_Type values accepted during ingestion.</summary>
+    /// <summary>All allowed Finding_Type values during ingestion validation.</summary>
     public static readonly IReadOnlyList<string> AllAllowedTypes = new[]
     {
         Obsolete, Quarantined, Restored, Deleted, NotObsolete,

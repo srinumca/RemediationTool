@@ -5,8 +5,9 @@ using RemediationTool.Domain.Entities;
 namespace RemediationTool.Application.Validators;
 
 /// <summary>
-/// Row-level FluentValidation rules applied to every FileFinding during ingestion.
-/// A failing row is rejected and logged — does NOT block other rows.
+/// Row-level validation rules for every FileFinding during ingestion.
+/// A failing row is rejected — does NOT stop other rows processing.
+/// FindingType validated as plain string against FindingTypes.AllAllowedTypes.
 /// </summary>
 public class FileFindingValidator : AbstractValidator<FileFinding>
 {
@@ -18,6 +19,8 @@ public class FileFindingValidator : AbstractValidator<FileFinding>
 
     public FileFindingValidator()
     {
+        // ── Required string fields ────────────────────────────────────────────
+
         RuleFor(x => x.FindingFileName)
             .NotEmpty().WithMessage("Finding_File_Name is required.")
             .MaximumLength(512).WithMessage("Finding_File_Name cannot exceed 512 characters.");
@@ -39,30 +42,47 @@ public class FileFindingValidator : AbstractValidator<FileFinding>
             .NotEmpty().WithMessage("Originating_Vendor_Tool is required.")
             .MaximumLength(100).WithMessage("Originating_Vendor_Tool cannot exceed 100 characters.");
 
-        // FindingType — validated against all allowed string values
+        // ── FindingType — string validation ───────────────────────────────────
+
         RuleFor(x => x.FindingType)
             .NotEmpty().WithMessage("Finding_Type is required.")
-            .Must(v => FindingTypes.AllAllowedTypes.Contains(v, StringComparer.OrdinalIgnoreCase))
-            .WithMessage($"Finding_Type is invalid. Allowed: {string.Join(", ", FindingTypes.AllAllowedTypes)}.");
+            .Must(v => FindingType.AllAllowedTypes
+                .Contains(v?.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage($"Finding_Type is invalid. Allowed values: {string.Join(", ", FindingType.AllAllowedTypes)}.");
 
-        // Conditional — Quarantined requires OriginalFileLocation + QuarantineDate
-        When(x => x.FindingType.Equals(FindingTypes.Quarantined, StringComparison.OrdinalIgnoreCase), () =>
-        {
-            RuleFor(x => x.OriginalFileLocation)
-                .NotEmpty()
-                .WithMessage("Original_File_Location is required when Finding_Type is Quarantined.");
-            RuleFor(x => x.QuarantineDateUtc)
-                .NotNull()
-                .WithMessage("Quarantine_Date is required when Finding_Type is Quarantined.");
-        });
+        // ── Conditional: Quarantined rows ─────────────────────────────────────
 
-        // Optional numeric
+        When(x => x.FindingType != null &&
+                  x.FindingType.Equals(FindingType.Quarantined, StringComparison.OrdinalIgnoreCase), () =>
+                  {
+                      RuleFor(x => x.OriginalFileLocation)
+                          .NotEmpty()
+                          .WithMessage("Original_File_Location is required when Finding_Type is Quarantined.");
+
+                      RuleFor(x => x.QuarantineDateUtc)
+                          .NotNull()
+                          .WithMessage("Quarantine_Date is required when Finding_Type is Quarantined.");
+                  });
+
+        // ── Conditional: Exception rows ───────────────────────────────────────
+
+        When(x => x.FindingType != null &&
+                  x.FindingType.Equals(FindingType.Exception, StringComparison.OrdinalIgnoreCase), () =>
+                  {
+                      RuleFor(x => x.ExceptionDateUtc)
+                          .NotNull()
+                          .WithMessage("Exception_Date is required when Finding_Type is Exception.");
+                  });
+
+        // ── Optional numeric ──────────────────────────────────────────────────
+
         RuleFor(x => x.FindingFileSizeBytes)
             .GreaterThanOrEqualTo(0)
             .When(x => x.FindingFileSizeBytes.HasValue)
             .WithMessage("Finding_File_Size must be >= 0.");
 
-        // Optional dates — cannot be future
+        // ── Optional dates — cannot be future ─────────────────────────────────
+
         RuleFor(x => x.LastModifiedDateUtc)
             .LessThanOrEqualTo(DateTime.UtcNow.AddDays(1))
             .When(x => x.LastModifiedDateUtc.HasValue)
@@ -83,13 +103,15 @@ public class FileFindingValidator : AbstractValidator<FileFinding>
             .When(x => x.DetectionDateUtc.HasValue)
             .WithMessage("Detection_Date cannot be in the future.");
 
-        // Optional enum-like
+        // ── Optional enum-like ────────────────────────────────────────────────
+
         RuleFor(x => x.RiskLevel)
             .Must(v => string.IsNullOrWhiteSpace(v) ||
                        AllowedRiskLevels.Contains(v, StringComparer.OrdinalIgnoreCase))
             .WithMessage($"Risk_Level must be one of: {string.Join(", ", AllowedRiskLevels)}.");
 
-        // Email format
+        // ── Email format ──────────────────────────────────────────────────────
+
         RuleFor(x => x.RestorationRequestorEmail)
             .EmailAddress()
             .When(x => !string.IsNullOrWhiteSpace(x.RestorationRequestorEmail))

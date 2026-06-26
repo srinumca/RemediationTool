@@ -1,16 +1,13 @@
-﻿using RemediationTool.Application.Repositories;
+﻿using Microsoft.Extensions.Logging;
+using RemediationTool.Application.Repositories;
+using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enums;
-using Microsoft.Extensions.Logging;
 
 namespace RemediationTool.Application.Services;
 
 /// <summary>
-/// POC delete service — permanently deletes quarantined files and their stubs.
-/// NOTE: This is placeholder POC logic. When the Automated Deletion requirement
-/// (Req 59-66) is properly implemented, this service will be fully rewritten
-/// to evaluate quarantine hold periods, hard-delete files and breadcrumbs,
-/// and update the data model using the append-only pattern.
+/// Delete service — permanently deletes quarantined files.
+/// Uses FileStatus enum for workflow state.
 /// </summary>
 public class DeleteService
 {
@@ -25,7 +22,7 @@ public class DeleteService
 
     public async Task DeleteAsync(Guid id)
     {
-        var file = _repository.GetById(id);
+        var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
 
         if (file == null)
         {
@@ -33,45 +30,41 @@ public class DeleteService
             return;
         }
 
-        if (file.FindingType != FindingType.Quarantined.ToString())
+        if (file.Status != FileStatus.QuarantineComplete)
         {
-            _logger.LogWarning("File is not in Quarantined state: {File}", file.FindingFileName);
+            _logger.LogWarning("File is not in QuarantineComplete state: {File}", file.FileName);
             return;
         }
 
         try
         {
-            var quarantinePath = file.CurrentFileLocation.ToString();
-            var stubPath = (file.OriginalFileLocation ?? string.Empty) + "_Retention_Placeholder";
+            file.Status = FileStatus.InProgress;
+            file.UpdatedDate = DateTime.UtcNow;
+            _repository.Update(file);
 
-            // Delete quarantined file
+            var quarantinePath = file.QuarantinePath;
+
             if (!string.IsNullOrWhiteSpace(quarantinePath) && File.Exists(quarantinePath))
                 File.Delete(quarantinePath);
 
-            // Delete breadcrumb stub
+            var stubPath = file.FilePath + "_Retention_Placeholder";
             if (File.Exists(stubPath))
                 File.Delete(stubPath);
 
-            // Update data model
-            file.FindingType = FindingType.Deleted.ToString();
-            file.DeletionDateUtc = DateTime.UtcNow;
-            file.CurrentFileLocation = string.Empty;
-            file.LastUpdateDateUtc = DateTime.UtcNow;
-            file.ErrorCategory = ErrorCategory.None;
-            file.ErrorDetail = null;
-
+            file.Status = FileStatus.DeletionComplete;
+            file.QuarantinePath = null;
+            file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
-            _logger.LogInformation("File deleted permanently: {File}", file.FindingFileName);
+            _logger.LogInformation("File deleted permanently: {File}", file.FileName);
         }
         catch (Exception ex)
         {
-            file.ErrorCategory = ErrorCategory.RetryExhausted;
-            file.ErrorDetail = ex.Message.ToString();
-            file.LastUpdateDateUtc = DateTime.UtcNow;
+            file.Status = FileStatus.Error;
+            file.ErrorReason = ex.Message;
+            file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
-
-            _logger.LogError(ex, "Delete failed: {File}", file.FindingFileName);
+            _logger.LogError(ex, "Delete failed: {File}", file.FileName);
         }
 
         await Task.CompletedTask;
@@ -79,7 +72,9 @@ public class DeleteService
 
     public async Task DeleteAllAsync()
     {
-        var files = _repository.GetLatestByFindingType(FindingType.Quarantined).ToList();
+        var files = _repository.GetAll()
+            .Where(x => x.Status == FileStatus.QuarantineComplete)
+            .ToList();
 
         foreach (var file in files)
             await DeleteAsync(file.Id);

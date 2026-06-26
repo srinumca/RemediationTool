@@ -7,6 +7,11 @@ using RemediationTool.Infrastructure.DynamoDB;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
+/// <summary>
+/// DynamoDB implementation of IIngestionCheckpointRepository.
+/// Table: gfr-ingestion-checkpoints-dev
+/// Primary key: jobId (HASH) — camelCase
+/// </summary>
 public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointRepository
 {
     private readonly IAmazonDynamoDB _dynamoDb;
@@ -29,7 +34,7 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue>
             {
-                ["jobId"] = new AttributeValue { S = jobId }
+                ["jobId"] = new AttributeValue { S = jobId }  // camelCase
             }
         }).GetAwaiter().GetResult();
 

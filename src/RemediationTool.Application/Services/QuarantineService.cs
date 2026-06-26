@@ -1,16 +1,13 @@
 using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Repositories;
+using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
 /// <summary>
-/// POC quarantine service — moves files from source to quarantine folder.
-/// NOTE: This is placeholder POC logic. When the Automated Quarantine requirement
-/// (Req 30-40) is properly implemented, this service will be fully rewritten
-/// to use the spec-defined workflow: validate at source, move to centralized
-/// quarantine, create breadcrumb stub, update data model (append-only).
+/// Quarantine service — moves eligible files to quarantine.
+/// Uses FileStatus enum (not FindingType) for workflow state.
 /// </summary>
 public class QuarantineService
 {
@@ -40,82 +37,75 @@ public class QuarantineService
     {
         _logger.LogInformation("=== Quarantine Job Started ===");
 
-        // Get all files currently in Obsolete state
-        var files = _repository.GetLatestByFindingType(FindingType.Obsolete).ToList();
+        var files = _repository.GetAll()
+            .Where(x => x.Status == FileStatus.PendingQuarantine)
+            .ToList();
 
-        _logger.LogInformation("Total obsolete files: {Count}", files.Count);
+        _logger.LogInformation("Files pending quarantine: {Count}", files.Count);
 
         foreach (var file in files)
         {
             try
             {
-                _logger.LogInformation("Processing: {File}", file.FindingFileName);
+                _logger.LogInformation("Processing: {File}", file.FileName);
 
-                //// Retention check — skip if modified within the last 10 years
-                //if (file.LastModifiedDateUtc.HasValue
-                //    && file.LastModifiedDateUtc.Value > DateTime.UtcNow.AddYears(-RetentionYears))
-                //{
-                //    file.FindingType = FindingType.NotObsolete.ToString();
-                //    file.LastUpdateDateUtc = DateTime.UtcNow;
-                //    _repository.Update(file);
+                // Retention check
+                if (file.LastModifiedDate > DateTime.UtcNow.AddYears(-RetentionYears))
+                {
+                    file.Status = FileStatus.NotYetStarted;
+                    file.UpdatedDate = DateTime.UtcNow;
+                    _repository.Update(file);
+                    _logger.LogWarning("Skipped (retention not met): {File}", file.FileName);
+                    continue;
+                }
 
-                //    _logger.LogWarning("Skipped (retention not met): {File}", file.FindingFileName);
-                //    continue;
-                //}
-
-                // Resolve full source path
-                var sourcePath = Path.Combine(Directory.GetCurrentDirectory(), file.CurrentFileLocation);
+                var sourcePath = Path.Combine(Directory.GetCurrentDirectory(), file.FilePath);
 
                 if (!File.Exists(sourcePath))
                 {
-                    file.ErrorCategory = ErrorCategory.MissingAtSource;
-                    file.ErrorDetail = $"File not found at source path: {sourcePath}";
-                    file.LastUpdateDateUtc = DateTime.UtcNow;
+                    file.Status = FileStatus.Error;
+                    file.ErrorReason = $"File not found at source: {sourcePath}";
+                    file.UpdatedDate = DateTime.UtcNow;
                     _repository.Update(file);
-
                     _logger.LogError("File not found: {Path}", sourcePath);
                     continue;
                 }
 
-                // Move to quarantine
+                // Mark in progress
+                file.Status = FileStatus.InProgress;
+                file.UpdatedDate = DateTime.UtcNow;
+                _repository.Update(file);
+
                 var fileName = Path.GetFileName(sourcePath);
                 var quarantinePath = Path.Combine(_quarantineFolder, fileName);
 
                 File.Copy(sourcePath, quarantinePath, overwrite: true);
                 File.Delete(sourcePath);
 
-                // Create breadcrumb stub at original location
-                var stubPath = sourcePath + "_Retention_Placeholder";
-                File.WriteAllText(stubPath,
-                    "This file was moved to a secure location per ADP's Retention Policy. " +
-                    "To request file restoration, submit a NetApp/SMB – File Restore Request.");
+                // Create stub
+                File.WriteAllText(sourcePath + "_Retention_Placeholder",
+                    "This file was moved due to ADP retention policy. Contact admin to request restore.");
 
-                // Update data model
-                file.OriginalFileLocation = file.CurrentFileLocation;
-                file.CurrentFileLocation = quarantinePath;
-                file.FindingType = FindingType.Quarantined.ToString();
-                file.QuarantineDateUtc = DateTime.UtcNow;
-                file.LastUpdateDateUtc = DateTime.UtcNow;
-                file.ErrorCategory = ErrorCategory.None;
-                file.ErrorDetail = null;
-
+                // Update to complete
+                file.Status = FileStatus.QuarantineComplete;
+                file.QuarantinePath = quarantinePath;
+                file.QuarantineDate = DateTime.UtcNow;
+                file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
 
-                _logger.LogInformation("Quarantined successfully: {File}", file.FindingFileName);
+                _logger.LogInformation("Quarantined: {File}", file.FileName);
             }
             catch (Exception ex)
             {
-                file.ErrorCategory = ErrorCategory.RetryExhausted;
-                file.ErrorDetail = ex.Message;
-                file.LastUpdateDateUtc = DateTime.UtcNow;
+                file.Status = FileStatus.Error;
+                file.ErrorReason = ex.Message;
+                file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
-
-                _logger.LogError(ex, "Error processing file: {File}", file.FindingFileName);
+                _logger.LogError(ex, "Quarantine failed: {File}", file.FileName);
             }
         }
 
         _logger.LogInformation("=== Quarantine Job Completed ===");
-
         await Task.CompletedTask;
     }
 }

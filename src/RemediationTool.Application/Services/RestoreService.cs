@@ -1,16 +1,13 @@
-using RemediationTool.Application.Repositories;
-using RemediationTool.Domain.Entities;
-using RemediationTool.Domain.Enums;
 using Microsoft.Extensions.Logging;
+using RemediationTool.Application.Repositories;
+using RemediationTool.Domain;
+using RemediationTool.Domain.Entities;
 
 namespace RemediationTool.Application.Services;
 
 /// <summary>
-/// POC restore service — restores quarantined files to their original location.
-/// NOTE: This is placeholder POC logic. When the File Restoration requirement
-/// (Req 41-58) is properly implemented, this service will be fully rewritten
-/// with the confirmation dialog, ticket identifier capture, priority processing,
-/// metadata preservation, and append-only data model updates per spec.
+/// Restore service — restores quarantined files to their original location.
+/// Uses FileStatus enum for workflow state.
 /// </summary>
 public class RestoreService
 {
@@ -23,87 +20,78 @@ public class RestoreService
         _logger = logger;
     }
 
-    public async Task RestoreAsync(Guid fileId)
+    public async Task RestoreAsync(Guid id)
     {
-        var file = _repository.GetById(fileId);
+        var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
 
         if (file == null)
         {
-            _logger.LogError("File not found in metadata: {FileId}", fileId);
+            _logger.LogError("File not found: {Id}", id);
             return;
         }
 
-        if (file.FindingType != FindingType.Quarantined.ToString())
+        if (file.Status != FileStatus.QuarantineComplete &&
+            file.Status != FileStatus.PendingRestore)
         {
-            _logger.LogWarning("File is not in Quarantined state: {File}", file.FindingFileName);
+            _logger.LogWarning("File is not in a restorable state: {File} Status: {Status}",
+                file.FileName, file.Status);
             return;
         }
 
         try
         {
-            var quarantinePath = file.CurrentFileLocation;
-            var originalPath = file.OriginalFileLocation;
+            file.Status = FileStatus.InProgress;
+            file.UpdatedDate = DateTime.UtcNow;
+            _repository.Update(file);
+
+            var quarantinePath = file.QuarantinePath;
+            var originalPath = file.OriginalFileLocation ?? file.FilePath;
 
             if (string.IsNullOrWhiteSpace(quarantinePath) || !File.Exists(quarantinePath))
             {
-                file.ErrorCategory = ErrorCategory.RestorationQuarantineFileMissing;
-                file.ErrorDetail = $"Quarantine file not found: {quarantinePath}";
-                file.LastUpdateDateUtc = DateTime.UtcNow;
+                file.Status = FileStatus.Error;
+                file.ErrorReason = $"Quarantine file not found: {quarantinePath}";
+                file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
-
                 _logger.LogError("Quarantine file missing: {Path}", quarantinePath);
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(originalPath))
-            {
-                file.ErrorCategory = ErrorCategory.RestorationTargetPathMissing;
-                file.ErrorDetail = "Original file location is not recorded for this finding.";
-                file.LastUpdateDateUtc = DateTime.UtcNow;
-                _repository.Update(file);
+            var dir = Path.GetDirectoryName(originalPath);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
 
-                _logger.LogError("Original file location missing for: {File}", file.FindingFileName);
-                return;
-            }
-
-            // Restore file to original location
-            Directory.CreateDirectory(Path.GetDirectoryName(originalPath)!);
             File.Copy(quarantinePath, originalPath, overwrite: true);
             File.Delete(quarantinePath);
 
-            // Remove breadcrumb stub
             var stubPath = originalPath + "_Retention_Placeholder";
             if (File.Exists(stubPath))
                 File.Delete(stubPath);
 
-            // Update data model
-            file.FindingType = FindingType.Restored.ToString();
-            file.RestorationDateUtc = DateTime.UtcNow;
-            file.CurrentFileLocation = originalPath;
-            file.OriginalFileLocation = null;
-            file.QuarantineDateUtc = null;
-            file.LastUpdateDateUtc = DateTime.UtcNow;
-            file.ErrorCategory = ErrorCategory.None;
-            file.ErrorDetail = null;
-
+            file.Status = FileStatus.RestorationComplete;
+            file.RestoredDateUtc = DateTime.UtcNow;
+            file.QuarantinePath = null;
+            file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
-            _logger.LogInformation("File restored: {File}", file.FindingFileName);
+            _logger.LogInformation("File restored: {File}", file.FileName);
         }
         catch (Exception ex)
         {
-            file.ErrorCategory = ErrorCategory.RetryExhausted;
-            file.ErrorDetail = ex.Message;
-            file.LastUpdateDateUtc = DateTime.UtcNow;
+            file.Status = FileStatus.Error;
+            file.ErrorReason = ex.Message;
+            file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
-
-            _logger.LogError(ex, "Restore failed: {File}", file.FindingFileName);
+            _logger.LogError(ex, "Restore failed: {File}", file.FileName);
         }
     }
 
     public async Task RestoreAllAsync()
     {
-        var files = _repository.GetLatestByFindingType(FindingType.Quarantined).ToList();
+        var files = _repository.GetAll()
+            .Where(x => x.Status == FileStatus.QuarantineComplete ||
+                        x.Status == FileStatus.PendingRestore)
+            .ToList();
 
         foreach (var file in files)
             await RestoreAsync(file.Id);

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using RemediationTool.Application.Constants;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Application.Services;
-using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.API.Controllers;
 
@@ -9,46 +9,70 @@ namespace RemediationTool.API.Controllers;
 [Route("api/report")]
 public class ReportController : ControllerBase
 {
-    private readonly ReportService _reportService;
+    private readonly ReportService _service;
     private readonly IRejectedRowRepository _rejectedRowRepository;
     private readonly ILogger<ReportController> _logger;
 
     public ReportController(
-        ReportService reportService,
+        ReportService service,
         IRejectedRowRepository rejectedRowRepository,
         ILogger<ReportController> logger)
     {
-        _reportService = reportService;
+        _service = service;
         _rejectedRowRepository = rejectedRowRepository;
         _logger = logger;
     }
 
-    /// <summary>Returns the most recent record per finding for the given FindingType.</summary>
+    /// <summary>Returns all file findings.</summary>
+    [HttpGet]
+    public IActionResult GetAll()
+    {
+        try { return Ok(_service.GetAll()); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all reports");
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>Returns findings filtered by status.</summary>
+    [HttpGet("status/{status}")]
+    public IActionResult GetByStatus(string status)
+    {
+        try { return Ok(_service.GetByStatus(status)); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting reports by status {Status}", status);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>Returns findings filtered by finding type (plain string).</summary>
     [HttpGet("finding-type/{findingType}")]
     public IActionResult GetByFindingType(string findingType)
     {
         try
         {
-            if (!Enum.TryParse<FindingType>(findingType, ignoreCase: true, out var parsed))
-                return BadRequest($"Invalid finding type '{findingType}'. Valid values: {string.Join(", ", Enum.GetNames<FindingType>())}");
+            // Validate against allowed types
+            if (!FindingType.AllAllowedTypes.Contains(findingType, StringComparer.OrdinalIgnoreCase))
+                return BadRequest(
+                    $"Invalid finding type '{findingType}'. " +
+                    $"Allowed values: {string.Join(", ", FindingType.AllAllowedTypes)}");
 
-            return Ok(_reportService.GetByFindingType(parsed));
+            return Ok(_service.GetByFindingType(findingType));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting report by finding type {FindingType}", findingType);
+            _logger.LogError(ex, "Error getting reports by finding type {FindingType}", findingType);
             return StatusCode(500, "Internal server error");
         }
     }
 
-    /// <summary>Returns counts of the most recent record per finding grouped by FindingType. Used by dashboard KPI cards.</summary>
+    /// <summary>Returns summary counts by finding type and status.</summary>
     [HttpGet("summary")]
     public IActionResult GetSummary()
     {
-        try
-        {
-            return Ok(_reportService.GetSummaryByFindingType());
-        }
+        try { return Ok(_service.GetSummary()); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting summary");
@@ -56,32 +80,11 @@ public class ReportController : ControllerBase
         }
     }
 
-    /// <summary>Returns the full audit history for a single finding by its SourceRecordId.</summary>
-    [HttpGet("history/{sourceRecordId}")]
-    public IActionResult GetHistory(string sourceRecordId)
-    {
-        try
-        {
-            return Ok(_reportService.GetHistoryBySourceRecordId(sourceRecordId));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting history for SourceRecordId {SourceRecordId}", sourceRecordId);
-            return StatusCode(500, "Internal server error");
-        }
-    }
-
     [HttpGet("rejected-rows")]
     public IActionResult GetRejectedRows()
-    {
-        var rows = _rejectedRowRepository.GetAll();
-        return Ok(rows);
-    }
+        => Ok(_rejectedRowRepository.GetAll());
 
     [HttpGet("rejected-rows/{jobId}")]
     public IActionResult GetRejectedRowsByJobId(string jobId)
-    {
-        var rows = _rejectedRowRepository.GetByJobId(jobId);
-        return Ok(rows);
-    }
+        => Ok(_rejectedRowRepository.GetByJobId(jobId));
 }
