@@ -28,6 +28,7 @@ public class RestoreService
 
     public async Task RestoreAsync(Guid id)
     {
+        _logger.LogDebug("RestoreAsync invoked for FileId: {Id}", id);
         _logger.LogInformation("[RESTORE START] FileId: {Id}", id);
 
         var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
@@ -49,6 +50,9 @@ public class RestoreService
 
         try
         {
+            _logger.LogDebug("Restoring FileId: {Id}, FileName: {FileName}, QuarantinePath: {QuarantinePath}, OriginalPath: {OriginalPath}",
+                id, file.FileName, file.QuarantinePath, file.OriginalFileLocation ?? file.FilePath);
+
             file.Status = FileStatus.InProgress;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
@@ -136,6 +140,8 @@ public class RestoreService
 
     public async Task RestoreAllAsync()
     {
+        _logger.LogInformation("[RESTORE ALL START] Fetching all files eligible for restore.");
+
         var files = _repository.GetAll()
             .Where(x => x.Status == FileStatus.QuarantineComplete ||
                         x.Status == FileStatus.PendingRestore)
@@ -144,7 +150,10 @@ public class RestoreService
         _logger.LogInformation("[RESTORE ALL START] Found {Count} file(s) eligible for restore.", files.Count);
 
         foreach (var file in files)
+        {
+            _logger.LogDebug("Processing batch restore for FileId: {Id}, FileName: {FileName}", file.Id, file.FileName);
             await RestoreAsync(file.Id);
+        }
 
         _logger.LogInformation("[RESTORE ALL COMPLETE] Processed {Count} file(s).", files.Count);
     }

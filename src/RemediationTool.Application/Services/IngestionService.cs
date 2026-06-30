@@ -371,24 +371,38 @@ public class IngestionService : IIngestionService
         Stream stream, string jobId, string inboundFileName,
         string uploadedBy, DateTime loadTime, List<RejectedRowSummary> rejectedRows)
     {
+        _logger.LogDebug("Starting Excel file parsing. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
+
         var findings = new List<FileFinding>();
-        using var workbook = new XLWorkbook(stream);
-        var sheet = workbook.Worksheet(1);
-        var headerMap = BuildExcelHeaderMap(sheet);
-
-        foreach (var row in sheet.RowsUsed().Skip(1))
+        try
         {
-            var rowNumber = row.RowNumber();
-            var finding = MapExcelRowToFinding(row, headerMap, jobId, inboundFileName, uploadedBy, loadTime);
+            using var workbook = new XLWorkbook(stream);
+            var sheet = workbook.Worksheet(1);
+            var headerMap = BuildExcelHeaderMap(sheet);
+            _logger.LogDebug("Excel headers parsed. JobId: {JobId}, HeaderCount: {HeaderCount}", jobId, headerMap.Count);
 
-            if (IsBlankFinding(finding))
+            foreach (var row in sheet.RowsUsed().Skip(1))
             {
-                _logger.LogDebug("Blank Excel row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
-                continue;
+                var rowNumber = row.RowNumber();
+                var finding = MapExcelRowToFinding(row, headerMap, jobId, inboundFileName, uploadedBy, loadTime);
+
+                if (IsBlankFinding(finding))
+                {
+                    _logger.LogDebug("Blank Excel row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
+                    continue;
+                }
+
+                ApplyValidation(finding, rowNumber, rejectedRows);
+                findings.Add(finding);
             }
 
-            ApplyValidation(finding, rowNumber, rejectedRows);
-            findings.Add(finding);
+            _logger.LogInformation("Excel file parsing completed. JobId: {JobId}, TotalRecords: {TotalRecords}, RejectedCount: {RejectedCount}", 
+                jobId, findings.Count, rejectedRows.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Excel file parsing failed. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
+            throw;
         }
 
         return findings;
@@ -414,6 +428,8 @@ public class IngestionService : IIngestionService
         Stream stream, string jobId, string inboundFileName,
         string uploadedBy, DateTime loadTime, List<RejectedRowSummary> rejectedRows)
     {
+        _logger.LogDebug("Starting CSV file parsing. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
+
         var findings = new List<FileFinding>();
         using var reader = new StreamReader(stream);
         using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
@@ -424,9 +440,12 @@ public class IngestionService : IIngestionService
                 throw new InvalidDataException("CSV file does not contain a header row.");
             csv.ReadHeader();
             ValidateHeaders(csv.HeaderRecord?.ToList() ?? new List<string>());
+            var headerCount = csv.HeaderRecord?.Length ?? 0;
+            _logger.LogDebug("CSV headers validated. JobId: {JobId}, HeaderCount: {HeaderCount}", jobId, headerCount);
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "CSV header validation failed. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
             throw new InvalidDataException($"CSV header validation failed. {ex.Message}", ex);
         }
 
@@ -471,6 +490,9 @@ public class IngestionService : IIngestionService
                 });
             }
         }
+
+        _logger.LogInformation("CSV file parsing completed. JobId: {JobId}, TotalRecords: {TotalRecords}, RejectedCount: {RejectedCount}", 
+            jobId, findings.Count, rejectedRows.Count);
 
         return findings;
     }
@@ -1067,16 +1089,27 @@ public class IngestionService : IIngestionService
 
     public async Task<IngestionUploadResponse> ResumeAsync(string jobId)
     {
+        _logger.LogInformation("Resume async initiated for JobId: {JobId}", jobId);
+
         if (string.IsNullOrWhiteSpace(jobId))
+        {
+            _logger.LogWarning("Resume async failed: JobId is required");
             return new IngestionUploadResponse { JobId = jobId, Status = IngestionJobStatus.Failed, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "JobId is required." };
+        }
 
         var checkpoint = _checkpointRepository.GetByJobId(jobId);
 
         if (checkpoint == null)
+        {
+            _logger.LogWarning("Resume async failed: No checkpoint found for JobId: {JobId}", jobId);
             return new IngestionUploadResponse { JobId = jobId, Status = IngestionJobStatus.Failed, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "No checkpoint found for the provided JobId." };
+        }
 
         if (!checkpoint.IsResumeEligible)
+        {
+            _logger.LogInformation("Resume async not eligible: JobId: {JobId}, CurrentStatus: {Status}", jobId, checkpoint.Status);
             return new IngestionUploadResponse { JobId = jobId, InboundFileName = checkpoint.InboundFileName, Status = checkpoint.Status, StartedAtUtc = DateTime.UtcNow, CompletedAtUtc = DateTime.UtcNow, Message = "This ingestion job is not eligible for resume.", IsResumeEligible = false, LastCheckpointUtc = checkpoint.LastCheckpointUtc, CheckpointMessage = checkpoint.FailureReason };
+        }
 
         var response = BuildResumeResponseFromCheckpoint(checkpoint);
 

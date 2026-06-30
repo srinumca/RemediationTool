@@ -1,5 +1,6 @@
 ﻿using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
@@ -17,69 +18,140 @@ public class DynamoDbIngestionJobAuditRepository : IIngestionJobAuditRepository
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
+    private readonly ILogger<DynamoDbIngestionJobAuditRepository> _logger;
 
     public DynamoDbIngestionJobAuditRepository(
         IAmazonDynamoDB dynamoDb,
-        IOptions<DynamoDbOptions> options)
+        IOptions<DynamoDbOptions> options,
+        ILogger<DynamoDbIngestionJobAuditRepository> logger)
     {
         _dynamoDb = dynamoDb;
         _tableName = options.Value.JobAuditTableName;
+        _logger = logger;
+        _logger.LogInformation("DynamoDbIngestionJobAuditRepository initialized with table: {TableName}", _tableName);
     }
 
+    /// <summary>
+    /// Gets all IngestionJobAudit records from the DynamoDB table.
+    /// </summary>
+    /// <returns></returns>
     public List<IngestionJobAudit> GetAll()
     {
-        var audits = new List<IngestionJobAudit>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
+        _logger.LogDebug("Getting all IngestionJobAudit records from DynamoDB");
+        try
         {
-            var response = _dynamoDb.ScanAsync(new ScanRequest
+            var audits = new List<IngestionJobAudit>();
+            Dictionary<string, AttributeValue>? lastKey = null;
+
+            do
             {
-                TableName = _tableName,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
+                var response = _dynamoDb.ScanAsync(new ScanRequest
+                {
+                    TableName = _tableName,
+                    ExclusiveStartKey = lastKey
+                }).GetAwaiter().GetResult();
 
-            audits.AddRange(response.Items.Select(DynamoDbAttributeMap.ToIngestionJobAudit));
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+                audits.AddRange(response.Items.Select(DynamoDbAttributeMap.ToIngestionJobAudit));
+                lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+            }
+            while (lastKey != null);
+
+            _logger.LogInformation("Retrieved {Count} IngestionJobAudit records from DynamoDB", audits.Count);
+            return audits;
         }
-        while (lastKey != null);
-
-        return audits;
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all IngestionJobAudit records from DynamoDB");
+            throw;
+        }
     }
 
+    /// <summary>
+    /// Gets an IngestionJobAudit record by JobId from the DynamoDB table.
+    /// </summary>
+    /// <param name="jobId"></param>
+    /// <returns></returns>
     public IngestionJobAudit? GetByJobId(string jobId)
     {
-        if (string.IsNullOrWhiteSpace(jobId)) return null;
-
-        var response = _dynamoDb.GetItemAsync(new GetItemRequest
+        _logger.LogDebug("Getting IngestionJobAudit by JobId: {JobId}", jobId);
+        if (string.IsNullOrWhiteSpace(jobId))
         {
-            TableName = _tableName,
-            Key = new Dictionary<string, AttributeValue>
-            {
-                ["jobId"] = new AttributeValue { S = jobId }
-            }
-        }).GetAwaiter().GetResult();
+            _logger.LogWarning("GetByJobId called with null or empty JobId");
+            return null;
+        }
 
-        return response.Item?.Count > 0
-            ? DynamoDbAttributeMap.ToIngestionJobAudit(response.Item)
-            : null;
+        try
+        {
+            var response = _dynamoDb.GetItemAsync(new GetItemRequest
+            {
+                TableName = _tableName,
+                Key = new Dictionary<string, AttributeValue>
+                {
+                    ["jobId"] = new AttributeValue { S = jobId }
+                }
+            }).GetAwaiter().GetResult();
+
+            var result = response.Item?.Count > 0
+                ? DynamoDbAttributeMap.ToIngestionJobAudit(response.Item)
+                : null;
+
+            if (result != null)
+                _logger.LogDebug("IngestionJobAudit found. JobId: {JobId}, Status: {Status}", jobId, result.Status);
+            else
+                _logger.LogDebug("IngestionJobAudit not found. JobId: {JobId}", jobId);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting IngestionJobAudit by JobId. JobId: {JobId}", jobId);
+            throw;
+        }
     }
 
+    /// <summary>
+    /// Adds a new IngestionJobAudit record to the DynamoDB table.
+    /// </summary>
+    /// <param name="audit"></param>
     public void Add(IngestionJobAudit audit)
     {
-        _dynamoDb.PutItemAsync(new PutItemRequest
+        _logger.LogDebug("Adding IngestionJobAudit. JobId: {JobId}, Status: {Status}", audit.JobId, audit.Status);
+        try
         {
-            TableName = _tableName,
-            Item = DynamoDbAttributeMap.ToMap(audit)
-        }).GetAwaiter().GetResult();
+            _dynamoDb.PutItemAsync(new PutItemRequest
+            {
+                TableName = _tableName,
+                Item = DynamoDbAttributeMap.ToMap(audit)
+            }).GetAwaiter().GetResult();
+            _logger.LogDebug("IngestionJobAudit added successfully. JobId: {JobId}", audit.JobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding IngestionJobAudit. JobId: {JobId}", audit.JobId);
+            throw;
+        }
     }
 
+    /// <summary>
+    /// Updates an existing IngestionJobAudit record in the DynamoDB table.
+    /// </summary>
+    /// <param name="audit"></param>
     public void Update(IngestionJobAudit audit)
     {
-        _dynamoDb.PutItemAsync(new PutItemRequest
+        _logger.LogDebug("Updating IngestionJobAudit. JobId: {JobId}, Status: {Status}", audit.JobId, audit.Status);
+        try
         {
-            TableName = _tableName,
-            Item = DynamoDbAttributeMap.ToMap(audit)
-        }).GetAwaiter().GetResult();
+            _dynamoDb.PutItemAsync(new PutItemRequest
+            {
+                TableName = _tableName,
+                Item = DynamoDbAttributeMap.ToMap(audit)
+            }).GetAwaiter().GetResult();
+            _logger.LogDebug("IngestionJobAudit updated successfully. JobId: {JobId}", audit.JobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating IngestionJobAudit. JobId: {JobId}", audit.JobId);
+            throw;
+        }
     }
 }

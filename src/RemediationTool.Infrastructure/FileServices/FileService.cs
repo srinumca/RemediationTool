@@ -8,6 +8,12 @@ namespace RemediationTool.Infrastructure.FileServices;
 // Handles physical file operations
 public class FileService : IFileService
 {
+    /// <summary>
+    /// Moves a file to a quarantine directory and returns the new path.
+    /// </summary>
+    /// <param name="sourcePath"></param>
+    /// <param name="quarantineRoot"></param>
+    /// <returns></returns>
     public string Quarantine(string sourcePath,string quarantineRoot)
     {
         try

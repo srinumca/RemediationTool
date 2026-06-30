@@ -36,6 +36,8 @@ public class UploadService
 
     public async Task<UploadResponse> UploadAsync(IFormFile file)
     {
+        _logger.LogDebug("UploadAsync invoked with file: {FileName}, Size: {SizeBytes} bytes", file?.FileName, file?.Length);
+
         ValidateFile(file);
 
         var uploadedAtUtc = DateTime.UtcNow;
@@ -117,10 +119,22 @@ public class UploadService
 
     public UploadResponse? GetStatus(string reportUid)
     {
-        if (string.IsNullOrWhiteSpace(reportUid)) return null;
+        _logger.LogDebug("GetStatus called for ReportUid: {ReportUid}", reportUid);
+
+        if (string.IsNullOrWhiteSpace(reportUid))
+        {
+            _logger.LogWarning("GetStatus failed: ReportUid is null or empty");
+            return null;
+        }
 
         var audit = _jobAuditRepository.GetByJobId(reportUid);
-        if (audit == null) return null;
+        if (audit == null)
+        {
+            _logger.LogWarning("GetStatus: No audit record found for ReportUid: {ReportUid}", reportUid);
+            return null;
+        }
+
+        _logger.LogDebug("GetStatus returning status for ReportUid: {ReportUid}, Status: {Status}", reportUid, audit.Status);
 
         return new UploadResponse
         {

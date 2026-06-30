@@ -28,6 +28,7 @@ public class DeleteService
 
     public async Task DeleteAsync(Guid id)
     {
+        _logger.LogDebug("DeleteAsync invoked for FileId: {Id}", id);
         _logger.LogInformation("[DELETE START] FileId: {Id}", id);
 
         var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
@@ -48,6 +49,8 @@ public class DeleteService
 
         try
         {
+            _logger.LogDebug("Starting deletion process for FileId: {Id}, FileName: {FileName}, QuarantinePath: {Path}", 
+                id, file.FileName, file.QuarantinePath);
             file.Status = FileStatus.InProgress;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
@@ -112,6 +115,8 @@ public class DeleteService
 
     public async Task DeleteAllAsync()
     {
+        _logger.LogInformation("[DELETE ALL START] Fetching all files eligible for deletion.");
+
         var files = _repository.GetAll()
             .Where(x => x.Status == FileStatus.QuarantineComplete)
             .ToList();
@@ -119,7 +124,10 @@ public class DeleteService
         _logger.LogInformation("[DELETE ALL START] Found {Count} file(s) eligible for deletion.", files.Count);
 
         foreach (var file in files)
+        {
+            _logger.LogDebug("Processing batch deletion for FileId: {Id}, FileName: {FileName}", file.Id, file.FileName);
             await DeleteAsync(file.Id);
+        }
 
         _logger.LogInformation("[DELETE ALL COMPLETE] Processed {Count} file(s).", files.Count);
     }

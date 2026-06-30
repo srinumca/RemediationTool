@@ -33,6 +33,9 @@ public sealed class LogPerformanceScope : IDisposable
     /// failure entry instead of a normal completion entry.</summary>
     public void MarkFailed() => _failed = true;
 
+    /// <summary>
+    /// Disposes the performance scope, stopping the stopwatch and logging the elapsed time.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed) return;

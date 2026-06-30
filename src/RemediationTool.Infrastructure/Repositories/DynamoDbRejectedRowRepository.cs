@@ -28,6 +28,10 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
         _tableName = options.Value.RejectedRowsTableName;
     }
 
+    /// <summary>
+    /// Retrieves all rejected rows from DynamoDB.
+    /// </summary>
+    /// <returns></returns>
     public List<RejectedRowDetail> GetAll()
     {
         var rows = new List<RejectedRowDetail>();
@@ -49,6 +53,11 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
         return rows;
     }
 
+    /// <summary>
+    /// Retrieves all rejected rows for a specific jobId from DynamoDB using the GSI.
+    /// </summary>
+    /// <param name="jobId"></param>
+    /// <returns></returns>
     public List<RejectedRowDetail> GetByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return new List<RejectedRowDetail>();
@@ -79,6 +88,10 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
         return rows;
     }
 
+    /// <summary>
+    /// Adds a list of rejected rows to DynamoDB in batches, respecting the DynamoDB batch write limit.
+    /// </summary>
+    /// <param name="rejectedRows"></param>
     public void AddRange(List<RejectedRowDetail> rejectedRows)
     {
         if (rejectedRows == null || rejectedRows.Count == 0) return;
