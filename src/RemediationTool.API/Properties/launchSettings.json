@@ -3,7 +3,7 @@
     "RemediationTool.API": {
       "commandName": "Project",
       "launchBrowser": true,
-      "launchUrl": "dashboard.html",
+      "launchUrl": "swagger",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "AWS_DEFAULT_REGION": "us-east-2",

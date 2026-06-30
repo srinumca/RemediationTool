@@ -27,64 +27,60 @@ public class ReportController : ControllerBase
     [HttpGet]
     public IActionResult GetAll()
     {
-        try { return Ok(_service.GetAll()); }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting all reports");
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[REPORT REQUEST] GetAll");
+        return Ok(_service.GetAll());
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>Returns findings filtered by status.</summary>
     [HttpGet("status/{status}")]
     public IActionResult GetByStatus(string status)
     {
-        try { return Ok(_service.GetByStatus(status)); }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting reports by status {Status}", status);
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[REPORT REQUEST] GetByStatus Status: {Status}", status);
+        return Ok(_service.GetByStatus(status));
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>Returns findings filtered by finding type (plain string).</summary>
     [HttpGet("finding-type/{findingType}")]
     public IActionResult GetByFindingType(string findingType)
     {
-        try
-        {
-            // Validate against allowed types
-            if (!FindingType.AllAllowedTypes.Contains(findingType, StringComparer.OrdinalIgnoreCase))
-                return BadRequest(
-                    $"Invalid finding type '{findingType}'. " +
-                    $"Allowed values: {string.Join(", ", FindingType.AllAllowedTypes)}");
+        _logger.LogInformation("[REPORT REQUEST] GetByFindingType FindingType: {FindingType}", findingType);
 
-            return Ok(_service.GetByFindingType(findingType));
-        }
-        catch (Exception ex)
+        // Validate against allowed types
+        if (!FindingType.AllAllowedTypes.Contains(findingType, StringComparer.OrdinalIgnoreCase))
         {
-            _logger.LogError(ex, "Error getting reports by finding type {FindingType}", findingType);
-            return StatusCode(500, "Internal server error");
+            _logger.LogWarning(
+                "[REPORT BAD REQUEST] Invalid finding type '{FindingType}'.", findingType);
+            return BadRequest(
+                $"Invalid finding type '{findingType}'. " +
+                $"Allowed values: {string.Join(", ", FindingType.AllAllowedTypes)}");
         }
+
+        return Ok(_service.GetByFindingType(findingType));
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>Returns summary counts by finding type and status.</summary>
     [HttpGet("summary")]
     public IActionResult GetSummary()
     {
-        try { return Ok(_service.GetSummary()); }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting summary");
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[REPORT REQUEST] GetSummary");
+        return Ok(_service.GetSummary());
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     [HttpGet("rejected-rows")]
     public IActionResult GetRejectedRows()
-        => Ok(_rejectedRowRepository.GetAll());
+    {
+        _logger.LogInformation("[REPORT REQUEST] GetRejectedRows (all)");
+        return Ok(_rejectedRowRepository.GetAll());
+    }
 
     [HttpGet("rejected-rows/{jobId}")]
     public IActionResult GetRejectedRowsByJobId(string jobId)
-        => Ok(_rejectedRowRepository.GetByJobId(jobId));
+    {
+        _logger.LogInformation("[REPORT REQUEST] GetRejectedRowsByJobId JobId: {JobId}", jobId);
+        return Ok(_rejectedRowRepository.GetByJobId(jobId));
+    }
 }

@@ -17,30 +17,24 @@ public class RestoreController : ControllerBase
     [HttpPost("{id}")]
     public async Task<IActionResult> Restore(Guid id)
     {
-        try
-        {
-            await _service.RestoreAsync(id);
-            return Ok($"Restore triggered for {id}");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error triggering restore for {FileId}", id);
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[RESTORE REQUEST] FileId: {Id}", id);
+
+        await _service.RestoreAsync(id);
+
+        _logger.LogInformation("[RESTORE RESPONSE] FileId: {Id} — restore triggered.", id);
+        return Ok($"Restore triggered for {id}");
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     [HttpPost("all")]
     public async Task<IActionResult> RestoreAll()
     {
-        try
-        {
-            await _service.RestoreAllAsync();
-            return Ok("Restore completed for all files");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error triggering restore for all files");
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[RESTORE ALL REQUEST]");
+
+        await _service.RestoreAllAsync();
+
+        _logger.LogInformation("[RESTORE ALL RESPONSE] — completed.");
+        return Ok("Restore completed for all files");
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }

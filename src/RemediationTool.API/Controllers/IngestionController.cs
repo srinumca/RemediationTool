@@ -21,6 +21,11 @@ namespace RemediationTool.API.Controllers;
 ///   → save rejected rows to DynamoDB
 ///   → update report status = Success / PartialSuccess / Failed
 ///   → return result to Step Function
+///
+/// NOTE: Unhandled exceptions are now caught once by GlobalExceptionMiddleware
+/// (registered in Program.cs). The try/catch below remains only for the
+/// KeyNotFoundException case, which this controller wants to map to a 404
+/// instead of the default 500.
 /// </summary>
 [ApiController]
 [Route("api/ingestion")]
@@ -53,9 +58,15 @@ public class IngestionController : ControllerBase
         if (string.IsNullOrWhiteSpace(reportUid))
             return BadRequest("ReportUID is required.");
 
+        _logger.LogInformation("[INGESTION REQUEST] ReportUid: {ReportUid} — ingestion triggered.", reportUid);
+
         try
         {
             var response = await _ingestionService.IngestAsync(reportUid);
+
+            _logger.LogInformation(
+                "[INGESTION RESPONSE] ReportUid: {ReportUid} Status: {Status} Total: {Total} Success: {Success} Rejected: {Rejected}",
+                reportUid, response.Status, response.TotalRecords, response.SuccessCount, response.RejectCount);
 
             if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
                 return UnprocessableEntity(response);
@@ -64,49 +75,51 @@ public class IngestionController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
+            _logger.LogWarning("[INGESTION NOT FOUND] ReportUid: {ReportUid} — no job record found.", reportUid);
             return NotFound($"No report found with ReportUID '{reportUid}'.");
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Ingestion failed for ReportUID {ReportUid}", reportUid);
-            return StatusCode(500, new IngestionUploadResponse
-            {
-                ReportUid = reportUid,
-                Status = IngestionJobStatus.Failed,
-                Message = $"Ingestion failed: {ex.Message}"
-            });
-        }
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
+        // IngestionService.IngestAsync already catches its own internal
+        // failures and returns a Status=Failed response rather than
+        // throwing, so a true exception reaching here means something
+        // truly unexpected happened (e.g. DI failure, OOM).
     }
 
     /// <summary>
     /// Resumes a failed or partially-completed ingestion job
     /// from the last successful checkpoint.
-    /// No re-upload required — reads remaining records from
-    /// the Parquet working file or DynamoDB staging table.
     /// </summary>
     [HttpPost("{reportUid}/resume")]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Resume(string reportUid)
     {
         if (string.IsNullOrWhiteSpace(reportUid))
             return BadRequest("ReportUID is required.");
 
+        _logger.LogInformation("[INGESTION RESUME REQUEST] ReportUid: {ReportUid}", reportUid);
+
         try
         {
-            var result = await _ingestionService.ResumeAsync(reportUid);
-            return Ok(result);
+            var response = await _ingestionService.ResumeAsync(reportUid);
+
+            _logger.LogInformation(
+                "[INGESTION RESUME RESPONSE] ReportUid: {ReportUid} Status: {Status}",
+                reportUid, response.Status);
+
+            if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
+                return UnprocessableEntity(response);
+
+            return Ok(response);
         }
         catch (KeyNotFoundException)
         {
+            _logger.LogWarning("[INGESTION RESUME NOT FOUND] ReportUid: {ReportUid}", reportUid);
             return NotFound($"No checkpoint found for ReportUID '{reportUid}'.");
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Resume failed for ReportUID {ReportUid}", reportUid);
-            return StatusCode(500, $"Resume failed: {ex.Message}");
-        }
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>
@@ -118,19 +131,17 @@ public class IngestionController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult GetStatus(string reportUid)
     {
-        try
-        {
-            var status = _ingestionService.GetStatus(reportUid);
+        _logger.LogInformation("[INGESTION STATUS REQUEST] ReportUid: {ReportUid}", reportUid);
 
-            if (status == null)
-                return NotFound($"No ingestion job found for ReportUID '{reportUid}'.");
+        var status = _ingestionService.GetStatus(reportUid);
 
-            return Ok(status);
-        }
-        catch (Exception ex)
+        if (status == null)
         {
-            _logger.LogError(ex, "Error fetching ingestion status for {ReportUid}", reportUid);
-            return StatusCode(500, "Internal server error");
+            _logger.LogWarning("[INGESTION STATUS NOT FOUND] ReportUid: {ReportUid}", reportUid);
+            return NotFound($"No ingestion job found for ReportUID '{reportUid}'.");
         }
+
+        return Ok(status);
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }

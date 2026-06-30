@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using RemediationTool.Application.Logging;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
@@ -13,28 +14,36 @@ public class RestoreService
 {
     private readonly IFileFindingRepository _repository;
     private readonly ILogger<RestoreService> _logger;
+    private readonly IAuditLogger _auditLogger;
 
-    public RestoreService(IFileFindingRepository repository, ILogger<RestoreService> logger)
+    public RestoreService(
+        IFileFindingRepository repository,
+        ILogger<RestoreService> logger,
+        IAuditLogger auditLogger)
     {
         _repository = repository;
         _logger = logger;
+        _auditLogger = auditLogger;
     }
 
     public async Task RestoreAsync(Guid id)
     {
+        _logger.LogInformation("[RESTORE START] FileId: {Id}", id);
+
         var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
 
         if (file == null)
         {
-            _logger.LogError("File not found: {Id}", id);
+            _logger.LogError("[RESTORE NOT FOUND] FileId: {Id} — no matching record.", id);
             return;
         }
 
         if (file.Status != FileStatus.QuarantineComplete &&
             file.Status != FileStatus.PendingRestore)
         {
-            _logger.LogWarning("File is not in a restorable state: {File} Status: {Status}",
-                file.FileName, file.Status);
+            _logger.LogWarning(
+                "[RESTORE SKIPPED] FileId: {Id} FileName: {File} — file is not in a restorable state (current: {Status}).",
+                id, file.FileName, file.Status);
             return;
         }
 
@@ -53,7 +62,18 @@ public class RestoreService
                 file.ErrorReason = $"Quarantine file not found: {quarantinePath}";
                 file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
-                _logger.LogError("Quarantine file missing: {Path}", quarantinePath);
+
+                _logger.LogError(
+                    "[RESTORE FAILED] FileId: {Id} FileName: {File} — quarantine file missing at {Path}.",
+                    id, file.FileName, quarantinePath);
+
+                _auditLogger.RecordEvent(
+                    eventType: "FileRestored",
+                    entityId: file.Id.ToString(),
+                    actor: "System",
+                    outcome: "Failed",
+                    details: new { file.FileName, Error = "Quarantine file not found", quarantinePath });
+
                 return;
             }
 
@@ -64,9 +84,18 @@ public class RestoreService
             File.Copy(quarantinePath, originalPath, overwrite: true);
             File.Delete(quarantinePath);
 
+            _logger.LogInformation(
+                "[RESTORE FILE] FileId: {Id} FileName: {File} — copied from {QuarantinePath} to {OriginalPath}.",
+                id, file.FileName, quarantinePath, originalPath);
+
             var stubPath = originalPath + "_Retention_Placeholder";
             if (File.Exists(stubPath))
+            {
                 File.Delete(stubPath);
+                _logger.LogInformation(
+                    "[RESTORE STUB] FileId: {Id} FileName: {File} — retention placeholder removed at {StubPath}.",
+                    id, file.FileName, stubPath);
+            }
 
             file.Status = FileStatus.RestorationComplete;
             file.RestoredDateUtc = DateTime.UtcNow;
@@ -74,7 +103,16 @@ public class RestoreService
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
-            _logger.LogInformation("File restored: {File}", file.FileName);
+            _logger.LogInformation(
+                "[RESTORE COMPLETE] FileId: {Id} FileName: {File} — restored to {OriginalPath}.",
+                id, file.FileName, originalPath);
+
+            _auditLogger.RecordEvent(
+                eventType: "FileRestored",
+                entityId: file.Id.ToString(),
+                actor: "System",
+                outcome: "Success",
+                details: new { file.FileName, RestoredToPath = originalPath });
         }
         catch (Exception ex)
         {
@@ -82,7 +120,17 @@ public class RestoreService
             file.ErrorReason = ex.Message;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
-            _logger.LogError(ex, "Restore failed: {File}", file.FileName);
+
+            _logger.LogError(ex,
+                "[RESTORE FAILED] FileId: {Id} FileName: {File} — restore failed. Error: {Error}",
+                id, file.FileName, ex.Message);
+
+            _auditLogger.RecordEvent(
+                eventType: "FileRestored",
+                entityId: file.Id.ToString(),
+                actor: "System",
+                outcome: "Failed",
+                details: new { file.FileName, Error = ex.Message });
         }
     }
 
@@ -93,7 +141,11 @@ public class RestoreService
                         x.Status == FileStatus.PendingRestore)
             .ToList();
 
+        _logger.LogInformation("[RESTORE ALL START] Found {Count} file(s) eligible for restore.", files.Count);
+
         foreach (var file in files)
             await RestoreAsync(file.Id);
+
+        _logger.LogInformation("[RESTORE ALL COMPLETE] Processed {Count} file(s).", files.Count);
     }
 }

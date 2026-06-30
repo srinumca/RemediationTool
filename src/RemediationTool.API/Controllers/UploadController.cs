@@ -15,6 +15,11 @@ namespace RemediationTool.API.Controllers;
 /// Flow:
 ///   UI → POST /api/upload → S3 (save file) → DynamoDB (create record)
 ///   → return 202 with ReportUID → Step Function picks up and calls Ingestion API
+///
+/// NOTE: Unhandled exceptions are now caught once by GlobalExceptionMiddleware
+/// (registered in Program.cs). The try/catch blocks below remain only for
+/// outcomes this controller wants to handle differently from the default
+/// 500 (validation errors → 400).
 /// </summary>
 [ApiController]
 [Route("api/upload")]
@@ -44,34 +49,40 @@ public class UploadController : ControllerBase
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(IFormFile file)
     {
+        _logger.LogInformation(
+            "[UPLOAD REQUEST] FileName: {FileName} Size: {Size}",
+            file?.FileName, file?.Length);
+
         try
         {
             var response = await _uploadService.UploadAsync(file);
 
             if (!response.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "[UPLOAD RESPONSE] FileName: {FileName} — returned 400 BadRequest. Message: {Message}",
+                    file?.FileName, response.Message);
                 return BadRequest(response);
+            }
 
             // 202 Accepted — file received, ingestion will start via Step Function
+            _logger.LogInformation(
+                "[UPLOAD RESPONSE] ReportUid: {ReportUid} — returned 202 Accepted.",
+                response.ReportUid);
             return Accepted(response);
         }
         catch (InvalidDataException ex)
         {
-            _logger.LogWarning(ex, "Upload validation failed: {Message}", ex.Message);
+            _logger.LogWarning(ex,
+                "[UPLOAD BAD REQUEST] FileName: {FileName} Reason: {Message}",
+                file?.FileName, ex.Message);
             return BadRequest(new UploadResponse
             {
                 IsSuccess = false,
                 Message = ex.Message
             });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Upload failed unexpectedly");
-            return StatusCode(500, new UploadResponse
-            {
-                IsSuccess = false,
-                Message = $"Upload failed: {ex.Message}"
-            });
-        }
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>
@@ -83,19 +94,17 @@ public class UploadController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult GetStatus(string reportUid)
     {
-        try
-        {
-            var status = _uploadService.GetStatus(reportUid);
+        _logger.LogInformation("[UPLOAD STATUS REQUEST] ReportUid: {ReportUid}", reportUid);
 
-            if (status == null)
-                return NotFound($"No report found with ReportUID '{reportUid}'.");
+        var status = _uploadService.GetStatus(reportUid);
 
-            return Ok(status);
-        }
-        catch (Exception ex)
+        if (status == null)
         {
-            _logger.LogError(ex, "Error fetching status for ReportUID {ReportUid}", reportUid);
-            return StatusCode(500, "Internal server error");
+            _logger.LogWarning("[UPLOAD STATUS NOT FOUND] ReportUid: {ReportUid}", reportUid);
+            return NotFound($"No report found with ReportUID '{reportUid}'.");
         }
+
+        return Ok(status);
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }

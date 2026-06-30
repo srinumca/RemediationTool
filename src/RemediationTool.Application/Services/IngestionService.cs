@@ -17,6 +17,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RemediationTool.Application.Logging;
 
 
 namespace RemediationTool.Application.Services;
@@ -33,6 +34,7 @@ public class IngestionService : IIngestionService
     private readonly IIngestionCheckpointRepository _checkpointRepository;
     private readonly IIngestionStagingRepository _stagingRepository;
     private readonly IIngestionWorkingFileStrategy _workingFileStrategy;
+    private readonly IAuditLogger _auditLogger;
 
     private const long MaxUploadFileSizeBytes = 100 * 1024 * 1024; // 100 MB
     private static readonly string[] AllowedUploadExtensions = { ".csv", ".xlsx" };
@@ -47,7 +49,8 @@ public class IngestionService : IIngestionService
        IOptions<IngestionProcessingOptions> processingOptions,
        IIngestionCheckpointRepository checkpointRepository,
        IIngestionStagingRepository stagingRepository,
-       IIngestionWorkingFileStrategy workingFileStrategy)
+       IIngestionWorkingFileStrategy workingFileStrategy,
+       IAuditLogger auditLogger)
     {
         _logger = logger;
         _repository = repository;
@@ -59,8 +62,8 @@ public class IngestionService : IIngestionService
         _checkpointRepository = checkpointRepository;
         _stagingRepository = stagingRepository;
         _workingFileStrategy = workingFileStrategy;
+        _auditLogger = auditLogger;
     }
-
     public async Task<IngestionUploadResponse> ProcessAsync(IFormFile file)
     {
         var startedAtUtc = DateTime.UtcNow;
@@ -132,9 +135,7 @@ public class IngestionService : IIngestionService
 
         try
         {
-            _logger.LogInformation(
-                "Ingestion started. ReportUid: {ReportUid}, FileName: {FileName}, SizeBytes: {SizeBytes}",
-                reportUid, inboundFileName, fileSizeBytes);
+            _logger.LogInformation("[INGESTION START] ReportUid: {ReportUid}, File: {File}", reportUid, jobAudit.InboundFileName);
 
             // Upload source file to S3:
             // Path: gfr-edg-reports/{yyyy}/{MM}/{reportUid}/{originalFileName}
@@ -179,8 +180,19 @@ public class IngestionService : IIngestionService
                 jobAudit.WorkingFileRecordCount = workingFileResult.RecordCount;
 
                 _logger.LogInformation(
-                    "Parquet working file created. ReportUid: {ReportUid}, Path: {Path}, RecordCount: {RecordCount}",
-                    reportUid, workingFileResult.Path, workingFileResult.RecordCount);
+                "[INGESTION COMPLETE] ReportUid: {ReportUid}, Status: {Status}, " +
+                "Total: {Total}, Success: {Success}, Rejected: {Rejected}",
+                reportUid, response.Status, response.TotalRecords,
+                response.SuccessCount, response.RejectCount);
+
+                // Audit event — separate from the technical log line above.
+                // Routed to the dedicated audit-*.log file with long retention.
+                _auditLogger.RecordEvent(
+                    eventType: "IngestionJobCompleted",
+                    entityId: reportUid,
+                    actor: jobAudit.UploadedBy ?? "system",
+                    outcome: response.Status.ToString(),
+                    details: new { response.TotalRecords, response.SuccessCount, response.RejectCount });
             }
 
             PersistValidFindingsInBatches(validFindings, response, jobAudit, configuredBatchSize);
@@ -210,9 +222,7 @@ public class IngestionService : IIngestionService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "Ingestion failed. ReportUid: {ReportUid}, FileName: {FileName}",
-                reportUid, inboundFileName);
+            _logger.LogError(ex, "[INGESTION ERROR] ReportUid: {ReportUid}", reportUid);
 
             response.Status = IngestionJobStatus.Failed;
             response.CompletedAtUtc = DateTime.UtcNow;
@@ -222,11 +232,11 @@ public class IngestionService : IIngestionService
 
             try { UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message); }
             catch (Exception checkpointEx)
-            { _logger.LogError(checkpointEx, "Failed to update checkpoint. ReportUid: {ReportUid}", reportUid); }
+            { _logger.LogError(checkpointEx, "[CHECKPOINT UPDATE FAILED] ReportUid: {ReportUid}", reportUid); }
 
             try { UpdateJobAudit(jobAudit, response, ex.Message); }
             catch (Exception auditEx)
-            { _logger.LogError(auditEx, "Failed to update job audit. ReportUid: {ReportUid}", reportUid); }
+            { _logger.LogError(auditEx, "[JOB AUDIT UPDATE FAILED] ReportUid: {ReportUid}", reportUid); }
 
             return response;
         }
@@ -281,9 +291,8 @@ public class IngestionService : IIngestionService
                     _jobAuditRepository.Update(jobAudit);
                 }
 
-                _logger.LogInformation(
-                    "Ingestion batch persisted. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, BatchSize: {BatchSize}, RecordsPersisted: {RecordsPersisted}, RetryCount: {RetryCount}",
-                    response.JobId, batch.BatchNumber, batches.Count, batchSize, batch.Records.Count, response.BatchPersistenceRetryCount);
+                _logger.LogInformation("[INGESTION UPLOAD START] ReportUid: {ReportUid}, FileName: {FileName}, SizeBytes: {SizeBytes}", 
+                    reportUid, inboundFileName, fileSizeBytes);
             }
             catch (Exception ex)
             {
@@ -434,7 +443,7 @@ public class IngestionService : IIngestionService
 
                 if (IsBlankFinding(finding))
                 {
-                    _logger.LogDebug("Blank CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
+                    _logger.LogDebug("[BLANK ROW SKIPPED] JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
                     continue;
                 }
 
@@ -443,7 +452,7 @@ public class IngestionService : IIngestionService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Malformed CSV row skipped. JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
+                _logger.LogWarning(ex, "[MALFORMED ROW SKIPPED] JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
 
                 // Only create a RejectedRowSummary — do NOT add a FileFinding for malformed rows
                 rejectedRows.Add(new RejectedRowSummary
@@ -921,8 +930,8 @@ public class IngestionService : IIngestionService
                     if (_processingOptions.EnableBatchCheckpointing)
                         _jobAuditRepository.Update(jobAudit);
                     _logger.LogWarning(args.Outcome.Exception,
-                        "Polly retry triggered. JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, Attempt: {AttemptNumber}, Delay: {RetryDelay}",
-                        response.JobId, batchNumber, totalBatches, args.AttemptNumber + 1, args.RetryDelay);
+                         "[BATCH RETRY] JobId: {JobId}, BatchNumber: {BatchNumber}, TotalBatches: {TotalBatches}, Attempt: {AttemptNumber}, Delay: {RetryDelay}",
+                         response.JobId, batchNumber, totalBatches, args.AttemptNumber + 1, args.RetryDelay);
                     return default;
                 }
             })
@@ -1278,7 +1287,7 @@ public class IngestionService : IIngestionService
             {
                 try { _stagingRepository.DeleteByJobId(reportUid); }
                 catch (Exception cleanupEx)
-                { _logger.LogWarning(cleanupEx, "Staging cleanup failed. ReportUid: {ReportUid}", reportUid); }
+                { _logger.LogWarning(cleanupEx, "[STAGING CLEANUP FAILED] ReportUid: {ReportUid}", reportUid); }
             }
 
             _logger.LogInformation(

@@ -1,4 +1,3 @@
-
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Services;
@@ -21,15 +20,12 @@ public class QuarantineController : ControllerBase
     [HttpPost("run")]
     public async Task<IActionResult> Run()
     {
-        try
-        {
-            await _service.ProcessAsync();
-            return Ok("Quarantine completed");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error running quarantine process");
-            return StatusCode(500, "Internal server error");
-        }
+        _logger.LogInformation("[QUARANTINE REQUEST] — quarantine run triggered.");
+
+        await _service.ProcessAsync();
+
+        _logger.LogInformation("[QUARANTINE RESPONSE] — quarantine run completed.");
+        return Ok("Quarantine completed");
+        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }
