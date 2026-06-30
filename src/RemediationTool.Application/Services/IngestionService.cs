@@ -291,8 +291,8 @@ public class IngestionService : IIngestionService
                     _jobAuditRepository.Update(jobAudit);
                 }
 
-                _logger.LogInformation("[INGESTION UPLOAD START] ReportUid: {ReportUid}, FileName: {FileName}, SizeBytes: {SizeBytes}", 
-                    reportUid, inboundFileName, fileSizeBytes);
+                //_logger.LogInformation("[INGESTION UPLOAD START] ReportUid: {ReportUid}, FileName: {FileName}, SizeBytes: {SizeBytes}", 
+                //    reportUid, inboundFileName, fileSizeBytes);
             }
             catch (Exception ex)
             {

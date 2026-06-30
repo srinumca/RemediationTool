@@ -2,12 +2,14 @@
 using Amazon.S3;
 using FluentValidation;
 using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Logging;
 using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Application.Services;
 using RemediationTool.Application.Validators;
 using RemediationTool.Infrastructure;
 using RemediationTool.Infrastructure.DynamoDB;
+using RemediationTool.Infrastructure.Logging;
 using RemediationTool.Infrastructure.Repositories;
 using RemediationTool.Infrastructure.Strategies;
 using Serilog;
