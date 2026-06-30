@@ -35,6 +35,18 @@ public class FileFinding
     public string OriginatingVendorTool { get; set; } = string.Empty;
     public string? DataSystemPath { get; set; }
 
+    /// <summary>
+    /// New field — confirmed distinct from OriginatingDataSystem in the
+    /// gfr-edg-findings-dev export (e.g. dataSystem="NetApp" while
+    /// originatingDataSystem="smb" on the same record). Named
+    /// SourceSystemPlatform rather than DataSystem to avoid colliding with
+    /// the existing FileFinding.DataSystem compatibility alias below, which
+    /// is already wired into ParquetIngestionWorkingFileStrategy.cs and
+    /// IngestionService.cs (CSV/Excel column mapping + reflection lookup).
+    /// Maps to DynamoDB attribute "dataSystem".
+    /// </summary>
+    public string? SourceSystemPlatform { get; set; }
+
     // ── Optional metadata ─────────────────────────────────────────────────────
     public DateTime? LastModifiedDateUtc { get; set; }
     public DateTime? CreatedDateUtc { get; set; }

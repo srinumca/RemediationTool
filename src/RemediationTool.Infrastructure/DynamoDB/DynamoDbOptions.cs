@@ -6,9 +6,9 @@
 /// Note: section key must be exactly "DynamoDB" (case-sensitive).
 ///
 /// Tables in use (5 — finding history table removed):
-///   gfr-file-metadata-dev           → job audit / report records
-///   gfr-file-findings-dev           → valid ingested findings
-///   gfr-rejected-rows-dev           → validation failures
+///   gfr-edg-reports-dev             → job audit / report records
+///   gfr-edg-findings-dev            → valid ingested findings
+///   gfr-edg-rejected-dev            → validation failures
 ///   gfr-ingestion-checkpoints-dev   → resume checkpoints
 ///   gfr-ingestion-staged-findings-dev → temp staging (TTL 7 days)
 /// </summary>
@@ -16,9 +16,9 @@ public class DynamoDbOptions
 {
     public const string SectionName = "AWS:DynamoDB";
 
-    public string FindingsTableName { get; set; } = "gfr-file-findings-dev";
-    public string JobAuditTableName { get; set; } = "gfr-file-metadata-dev";
-    public string RejectedRowsTableName { get; set; } = "gfr-rejected-rows-dev";
+    public string FindingsTableName { get; set; } = "gfr-edg-findings-dev";
+    public string JobAuditTableName { get; set; } = "gfr-edg-reports-dev";
+    public string RejectedRowsTableName { get; set; } = "gfr-edg-rejected-dev";
     public string CheckpointsTableName { get; set; } = "gfr-ingestion-checkpoints-dev";
     public string StagedFindingsTableName { get; set; } = "gfr-ingestion-staged-findings-dev";
     public string HistoryTableName { get; set; } = "gfr-finding-history-dev";

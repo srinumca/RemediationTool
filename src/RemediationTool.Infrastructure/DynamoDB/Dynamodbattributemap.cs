@@ -97,13 +97,19 @@ public static class DynamoDbAttributeMap
     {
         var item = new Dictionary<string, AttributeValue>();
 
-        AddS(item, "id", f.Id.ToString());
-        AddS(item, "recordVersionId", f.RecordVersionId);
+        AddS(item, "uid", f.Id.ToString());
+
+        if (int.TryParse(f.RecordVersionId, out var versionAsInt))
+            AddN(item, "recordVersionId", versionAsInt);
+        else
+            AddN(item, "recordVersionId", 1); // fallback for non-numeric legacy values
+
         AddS(item, "sourceRecordId", f.SourceRecordId);
         AddS(item, "jobId", f.IngestionJobId);
         AddS(item, "inboundFileName", f.InboundFileName);
         AddS(item, "userName", f.UserName);
-        AddDate(item, "loadDateUtc", f.LoadDateUtc);
+
+        AddDate(item, "rowCreatedDateOn", f.LoadDateUtc);
         AddDate(item, "lastUpdateDateUtc", f.LastUpdateDateUtc);
         AddS(item, "findingFileName", f.FindingFileName);
         AddS(item, "findingFileFormat", f.FindingFileFormat);
@@ -112,7 +118,10 @@ public static class DynamoDbAttributeMap
         AddS(item, "findingType", f.FindingType);   // stored as string
         AddS(item, "originatingDataSystem", f.OriginatingDataSystem);
         AddS(item, "originatingVendorTool", f.OriginatingVendorTool);
-        AddNullableDate(item, "lastModifiedDateUtc", f.LastModifiedDateUtc);
+
+        AddS(item, "dataSystem", f.SourceSystemPlatform);
+
+        AddNullableDate(item, "fileLastModifiedOn", f.LastModifiedDateUtc);
         AddNullableDate(item, "createdDateUtc", f.CreatedDateUtc);
         AddNullableDate(item, "lastAccessedDateUtc", f.LastAccessedDateUtc);
         AddNullableDate(item, "detectionDateUtc", f.DetectionDateUtc);
@@ -134,18 +143,26 @@ public static class DynamoDbAttributeMap
 
     public static FileFinding ToFileFinding(Dictionary<string, AttributeValue> item)
     {
-        var statusRaw = GetS(item, "status");
+        var statusRaw = GetS(item, "status") ?? GetS(item, "Status");
         Enum.TryParse<FileStatus>(statusRaw, ignoreCase: true, out var parsedStatus);
 
         return new FileFinding
         {
-            Id = Guid.TryParse(GetS(item, "id"), out var id) ? id : Guid.NewGuid(),
-            RecordVersionId = GetSOrEmpty(item, "recordVersionId"),
+            Id = Guid.TryParse(GetS(item, "uid") ?? GetS(item, "id"), out var id) ? id : Guid.NewGuid(),
+
+            RecordVersionId = item.TryGetValue("recordVersionId", out var rv) && rv.N != null
+                ? rv.N
+                : GetSOrEmpty(item, "recordVersionId"),
+
             SourceRecordId = GetS(item, "sourceRecordId"),
             IngestionJobId = GetS(item, "jobId"),
             InboundFileName = GetSOrEmpty(item, "inboundFileName"),
             UserName = GetSOrEmpty(item, "userName"),
-            LoadDateUtc = GetDateOrDefault(item, "loadDateUtc"),
+
+            LoadDateUtc = item.ContainsKey("rowCreatedDateOn")
+                ? GetDateOrDefault(item, "rowCreatedDateOn")
+                : GetDateOrDefault(item, "loadDateUtc"),
+
             LastUpdateDateUtc = GetDateOrDefault(item, "lastUpdateDateUtc"),
             FindingFileName = GetSOrEmpty(item, "findingFileName"),
             FindingFileFormat = GetSOrEmpty(item, "findingFileFormat"),
@@ -154,7 +171,12 @@ public static class DynamoDbAttributeMap
             FindingType = GetSOrEmpty(item, "findingType"),  // plain string
             OriginatingDataSystem = GetSOrEmpty(item, "originatingDataSystem"),
             OriginatingVendorTool = GetSOrEmpty(item, "originatingVendorTool"),
-            LastModifiedDateUtc = GetNullableDate(item, "lastModifiedDateUtc"),
+
+            SourceSystemPlatform = GetS(item, "dataSystem"),
+
+            LastModifiedDateUtc = item.ContainsKey("fileLastModifiedOn")
+                ? GetNullableDate(item, "fileLastModifiedOn")
+                : GetNullableDate(item, "lastModifiedDateUtc"),
             CreatedDateUtc = GetNullableDate(item, "createdDateUtc"),
             LastAccessedDateUtc = GetNullableDate(item, "lastAccessedDateUtc"),
             DetectionDateUtc = GetNullableDate(item, "detectionDateUtc"),
@@ -182,19 +204,28 @@ public static class DynamoDbAttributeMap
         var item = new Dictionary<string, AttributeValue>();
 
         AddS(item, "jobId", a.JobId);
-        AddS(item, "reportUid", a.ReportUid);
+
+        AddS(item, "uid", a.ReportUid);
         AddS(item, "inboundFileName", a.InboundFileName);
         AddN(item, "fileSizeBytes", a.FileSizeBytes);
         AddS(item, "fileFormat", a.FileFormat);
         AddS(item, "s3FolderPath", a.S3FolderPath);
-        AddS(item, "sourceFilePath", a.SourceFilePath);
-        AddS(item, "metadataJsonPath", a.MetadataJsonPath);
+
+        AddS(item, "s3FilePath", a.SourceFilePath);
+
+        AddS(item, "processingSummaryPath", a.MetadataJsonPath);
+
         AddS(item, "workingFilePath", a.WorkingFilePath);
         AddS(item, "workingFileFormat", a.WorkingFileFormat);
         AddN(item, "workingFileRecordCount", a.WorkingFileRecordCount);
         AddS(item, "uploadedBy", a.UploadedBy);
         AddS(item, "userName", a.UserName);
         AddS(item, "startedBy", a.StartedBy);
+
+        AddS(item, "UploadedDisplayName", a.UploadedDisplayName);
+        AddS(item, "UploadedEmailId", a.UploadedEmailId);
+        AddS(item, "inboundFileChecksum", a.InboundFileChecksum);
+
         AddDate(item, "startTimestampUtc", a.StartTimestampUtc);
         AddNullableDate(item, "endTimestampUtc", a.EndTimestampUtc);
         AddS(item, "status", a.Status.ToString());
@@ -231,19 +262,29 @@ public static class DynamoDbAttributeMap
         return new IngestionJobAudit
         {
             JobId = GetSOrEmpty(item, "jobId"),
-            ReportUid = GetSOrEmpty(item, "reportUid"),
+
+            ReportUid = GetS(item, "uid") ?? GetSOrEmpty(item, "reportUid"),
+
             InboundFileName = GetSOrEmpty(item, "inboundFileName"),
             FileSizeBytes = GetLongOrZero(item, "fileSizeBytes"),
             FileFormat = GetSOrEmpty(item, "fileFormat"),
             S3FolderPath = GetSOrEmpty(item, "s3FolderPath"),
-            SourceFilePath = GetSOrEmpty(item, "sourceFilePath"),
-            MetadataJsonPath = GetSOrEmpty(item, "metadataJsonPath"),
+
+            SourceFilePath = GetS(item, "s3FilePath") ?? GetSOrEmpty(item, "sourceFilePath"),
+
+            MetadataJsonPath = GetS(item, "processingSummaryPath") ?? GetSOrEmpty(item, "metadataJsonPath"),
+
             WorkingFilePath = GetS(item, "workingFilePath"),
             WorkingFileFormat = GetS(item, "workingFileFormat"),
             WorkingFileRecordCount = GetIntOrZero(item, "workingFileRecordCount"),
             UploadedBy = GetSOrEmpty(item, "uploadedBy"),
             UserName = GetSOrEmpty(item, "userName"),
             StartedBy = GetSOrEmpty(item, "startedBy"),
+
+            UploadedDisplayName = GetS(item, "UploadedDisplayName"),
+            UploadedEmailId = GetS(item, "UploadedEmailId"),
+            InboundFileChecksum = GetS(item, "inboundFileChecksum"),
+
             StartTimestampUtc = GetDateOrDefault(item, "startTimestampUtc"),
             EndTimestampUtc = GetNullableDate(item, "endTimestampUtc"),
             Status = status,

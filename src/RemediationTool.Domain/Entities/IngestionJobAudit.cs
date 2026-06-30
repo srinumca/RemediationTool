@@ -4,13 +4,13 @@ namespace RemediationTool.Domain.Entities;
 
 /// <summary>
 /// Audit record for a single EDG report upload.
-/// Stored in DynamoDB: gfr-file-metadata-dev
+/// Stored in DynamoDB: gfr-edg-reports-dev
 /// Primary key: jobId (= ReportUid)
 ///
 /// ReportUid links:
-///   S3 folder: gfr-edg-reports/{yyyy}/{MM}/{reportUid}/
-///   Findings:  gfr-file-findings-dev (jobId on every row)
-///   Rejected:  gfr-rejected-rows-dev (jobId on every row)
+///   S3 folder: gfr-edg-bucket-dev/{yyyy}/{MM}/{reportUid}/
+///   Findings:  gfr-edg-findings-dev (jobId on every row)
+///   Rejected:  gfr-edg-rejected-dev (jobId on every row)
 /// </summary>
 public class IngestionJobAudit
 {
@@ -66,6 +66,15 @@ public class IngestionJobAudit
     public string StartedBy { get; set; } = "System";
     public DateTime StartTimestampUtc { get; set; }
     public DateTime? EndTimestampUtc { get; set; }
+
+    /// <summary>Display name of the uploader (e.g. "Bockoven, Brenna (ES)"). New field — added to match gfr-edg-reports-dev export.</summary>
+    public string? UploadedDisplayName { get; set; }
+
+    /// <summary>Email address of the uploader. New field — added to match gfr-edg-reports-dev export.</summary>
+    public string? UploadedEmailId { get; set; }
+
+    /// <summary>MD5 checksum of the inbound file, used to detect duplicate uploads. New field — added to match gfr-edg-reports-dev export.</summary>
+    public string? InboundFileChecksum { get; set; }
 
     // ── Status ────────────────────────────────────────────────────────────────
 
