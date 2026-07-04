@@ -1,15 +1,15 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace RemediationTool.Domain.Enums;
 
 /// <summary>
-/// Standardised error categories for remediation action failures,
+/// Standardised error categories for ingestion validation failures and remediation action failures,
 /// as defined in the Error Categories tab of the requirements specification.
 ///
 /// Used on <see cref="RemediationTool.Domain.Entities.FileFinding.ErrorCategory"/>
 /// to classify why a quarantine, deletion, or restoration action failed.
-/// This is distinct from ingestion validation errors, which are captured
-/// in <see cref="RemediationTool.Domain.Entities.RejectedRowDetail"/>.
+/// Also used on <see cref="RemediationTool.Domain.Entities.RejectedRowDetail"/>
+/// to classify why an inbound row was rejected during ingestion.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ErrorCategory
@@ -62,7 +62,7 @@ public enum ErrorCategory
     RateLimitingOrThrottling,
 
     // ---------------------------------------------------------------
-    // Processing errors
+    // Processing / ingestion errors
     // ---------------------------------------------------------------
 
     /// <summary>
@@ -76,6 +76,36 @@ public enum ErrorCategory
     /// Actionable: true — requires manual investigation.
     /// </summary>
     RetryExhausted,
+
+    /// <summary>
+    /// Row failed ingestion validation.
+    /// Actionable: true — source data should be corrected and re-uploaded.
+    /// </summary>
+    ValidationError,
+
+    /// <summary>
+    /// Row could not be parsed due to malformed CSV/XLSX structure or invalid row shape.
+    /// Actionable: true — source file should be corrected and re-uploaded.
+    /// </summary>
+    MalformedInputRow,
+
+    /// <summary>
+    /// Required inbound field is missing.
+    /// Actionable: true — source data should be corrected and re-uploaded.
+    /// </summary>
+    MissingRequiredField,
+
+    /// <summary>
+    /// Inbound value has an invalid data type, such as a non-date value in a date field.
+    /// Actionable: true — source data should be corrected and re-uploaded.
+    /// </summary>
+    InvalidDataType,
+
+    /// <summary>
+    /// Inbound value is outside the allowed value list.
+    /// Actionable: true — source data should be corrected and re-uploaded.
+    /// </summary>
+    InvalidAllowedValue,
 
     // ---------------------------------------------------------------
     // Restoration-specific errors (priority: High unless stated)
