@@ -1,8 +1,9 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Logging;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
@@ -46,13 +47,18 @@ public class DeleteService
             return;
         }
 
+        // Capture values before changing Status to InProgress.
+        // FileFinding.QuarantinePath is a compatibility property that returns a value
+        // only when Status == QuarantineComplete, so reading it after setting InProgress
+        // would incorrectly return null.
+        var quarantinePath = file.QuarantinePath;
+        var stubPath = file.FilePath + "_Retention_Placeholder";
+
         try
         {
             file.Status = FileStatus.InProgress;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
-
-            var quarantinePath = file.QuarantinePath;
 
             if (!string.IsNullOrWhiteSpace(quarantinePath) && File.Exists(quarantinePath))
             {
@@ -62,7 +68,6 @@ public class DeleteService
                     id, file.FileName, quarantinePath);
             }
 
-            var stubPath = file.FilePath + "_Retention_Placeholder";
             if (File.Exists(stubPath))
             {
                 File.Delete(stubPath);
@@ -73,6 +78,8 @@ public class DeleteService
 
             file.Status = FileStatus.DeletionComplete;
             file.QuarantinePath = null;
+            file.ErrorCategory = ErrorCategory.None.ToString();
+            file.ErrorReason = string.Empty;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
@@ -90,8 +97,11 @@ public class DeleteService
         }
         catch (Exception ex)
         {
+            var category = ErrorCategoryResolver.FromException(ex);
+
             file.Status = FileStatus.Error;
             file.ErrorReason = ex.Message;
+            file.ErrorCategory = category.ToString();
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
@@ -104,7 +114,7 @@ public class DeleteService
                 entityId: file.Id.ToString(),
                 actor: "System",
                 outcome: "Failed",
-                details: new { file.FileName, Error = ex.Message });
+                details: new { file.FileName, Error = ex.Message, ErrorCategory = category.ToString() });
         }
 
         await Task.CompletedTask;

@@ -1,20 +1,20 @@
-﻿using RemediationTool.Domain.Enums;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
 /// <summary>
 /// Single place in the codebase that decides which ErrorCategory to assign
-/// to a failed remediation action, based on the exception type or the
-/// specific pre-check condition that triggered the failure.
+/// to a failed ingestion row or remediation action, based on the exception type
+/// or the specific pre-check condition that triggered the failure.
 ///
-/// Rules are taken directly from the Error Categories tab of the
-/// requirements spreadsheet. Each method maps a real failure scenario
-/// to the correct enum value so it can be stored in the errorCategory
-/// column of gfr-edg-findings-dev.
+/// Rules are taken directly from the Error Categories tab of the requirements
+/// spreadsheet. Each method maps a real failure scenario to the correct enum
+/// value so it can be stored in the errorCategory column.
 ///
 /// Usage:
 ///   Pre-check: file.ErrorCategory = ErrorCategoryResolver.SourceFileMissing().ToString();
 ///   Exception: file.ErrorCategory = ErrorCategoryResolver.FromException(ex).ToString();
+///   Validation: row.ErrorCategory = ErrorCategoryResolver.ValidationFailure(error.PropertyName).ToString();
 /// </summary>
 public static class ErrorCategoryResolver
 {
@@ -56,9 +56,44 @@ public static class ErrorCategoryResolver
         InvalidOperationException ioe when IsSystemUnavailable(ioe)
             => ErrorCategory.RestorationSystemUnavailable,
 
+        // Invalid file/row shape or unsupported upload content
+        InvalidDataException
+            => ErrorCategory.MalformedInputRow,
+
         // Any other unclassified failure — does not match any known category
         _ => ErrorCategory.Others
     };
+
+    // ── Ingestion validation resolution ───────────────────────────────────────
+
+    /// <summary>
+    /// Row failed FluentValidation. When possible, maps the validation failure
+    /// to a more specific category for reporting.
+    /// </summary>
+    public static ErrorCategory ValidationFailure(string? propertyName, string? errorMessage = null)
+    {
+        var normalizedProperty = propertyName?.Trim() ?? string.Empty;
+        var normalizedMessage = errorMessage?.Trim().ToLowerInvariant() ?? string.Empty;
+
+        if (normalizedMessage.Contains("required") || normalizedMessage.Contains("must not be empty"))
+            return ErrorCategory.MissingRequiredField;
+
+        if (normalizedMessage.Contains("invalid") || normalizedMessage.Contains("must be one of"))
+            return ErrorCategory.InvalidAllowedValue;
+
+        if (normalizedMessage.Contains("date") || normalizedMessage.Contains("number") || normalizedMessage.Contains("size"))
+            return ErrorCategory.InvalidDataType;
+
+        return string.IsNullOrWhiteSpace(normalizedProperty)
+            ? ErrorCategory.ValidationError
+            : ErrorCategory.ValidationError;
+    }
+
+    /// <summary>
+    /// Row could not be parsed before normal validation could run.
+    /// </summary>
+    public static ErrorCategory MalformedInputRow()
+        => ErrorCategory.MalformedInputRow;
 
     // ── Pre-check condition resolution ────────────────────────────────────────
     // Called when a specific condition is detected BEFORE the operation
