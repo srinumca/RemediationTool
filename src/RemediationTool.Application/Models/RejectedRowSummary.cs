@@ -22,6 +22,14 @@ public class RejectedRowSummary
 
     public string ErrorReason { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Error category classifying why this row was rejected.
+    /// For CSV validation failures this is always "ValidationError".
+    /// For malformed/unparseable rows this is "UnsupportedFileType".
+    /// Maps to the errorCategory column in gfr-edg-rejected-dev.
+    /// </summary>
+    public string ErrorCategory { get; set; } = string.Empty;
+
     public DateTime ErrorDateUtc { get; set; } = DateTime.UtcNow;
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

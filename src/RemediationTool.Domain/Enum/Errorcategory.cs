@@ -115,5 +115,16 @@ public enum ErrorCategory
     /// File was already restored, or a restore was previously completed for this record.
     /// Actionable: false — priority: Low.
     /// </summary>
-    RestorationDuplicateRestoreAttempt
+    RestorationDuplicateRestoreAttempt,
+
+    // ---------------------------------------------------------------
+    // Catch-all
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// The error or exception does not match any of the defined categories.
+    /// Requires manual investigation to determine the root cause.
+    /// Actionable: true.
+    /// </summary>
+    Others
 }

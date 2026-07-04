@@ -13,6 +13,7 @@ using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
+using RemediationTool.Domain.Enums;  // ErrorCategory enum
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -466,6 +467,7 @@ public class IngestionService : IIngestionService
                     FieldName = "CSV_ROW",
                     RejectedValue = null,
                     ErrorReason = $"Malformed CSV row. {ex.Message}",
+                    ErrorCategory = ErrorCategory.Others.ToString(),   // row could not be parsed — unclassified parse error
                     ErrorDateUtc = DateTime.UtcNow,
                     RawRowJson = null
                 });
@@ -632,6 +634,7 @@ public class IngestionService : IIngestionService
                 FieldName = error.PropertyName,
                 RejectedValue = GetRejectedValue(finding, error.PropertyName),
                 ErrorReason = error.ErrorMessage,
+                ErrorCategory = ErrorCategory.Others.ToString(),   // row failed FluentValidation — no specific enum value for data validation failures
                 ErrorDateUtc = DateTime.UtcNow,
                 RawRowJson = rawRowJson
             });
@@ -881,6 +884,7 @@ public class IngestionService : IIngestionService
             FieldName = row.FieldName,
             RejectedValue = row.RejectedValue,
             ErrorReason = row.ErrorReason,
+            ErrorCategory = row.ErrorCategory,   // propagate from validation/parse step
             ErrorDateUtc = row.ErrorDateUtc == default ? DateTime.UtcNow : row.ErrorDateUtc,
             RawRowJson = row.RawRowJson
         }).ToList();

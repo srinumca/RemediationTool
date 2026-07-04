@@ -3,6 +3,7 @@ using RemediationTool.Application.Logging;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
@@ -80,6 +81,7 @@ public class QuarantineService
                 {
                     file.Status = FileStatus.Error;
                     file.ErrorReason = $"File not found at source: {sourcePath}";
+                    file.ErrorCategory = ErrorCategoryResolver.SourceFileMissing().ToString();
                     file.UpdatedDate = DateTime.UtcNow;
                     _repository.Update(file);
                     _logger.LogError(
@@ -115,6 +117,7 @@ public class QuarantineService
 
                 // Update to complete
                 file.Status = FileStatus.QuarantineComplete;
+                file.ErrorCategory = ErrorCategory.None.ToString();
                 file.QuarantinePath = quarantinePath;
                 file.QuarantineDate = DateTime.UtcNow;
                 file.UpdatedDate = DateTime.UtcNow;
@@ -137,8 +140,10 @@ public class QuarantineService
             }
             catch (Exception ex)
             {
+                var category = ErrorCategoryResolver.FromException(ex);
                 file.Status = FileStatus.Error;
                 file.ErrorReason = ex.Message;
+                file.ErrorCategory = category.ToString();
                 file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
 
