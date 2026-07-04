@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace RemediationTool.Application.Models;
 
@@ -24,11 +24,10 @@ public class RejectedRowSummary
 
     /// <summary>
     /// Error category classifying why this row was rejected.
-    /// For CSV validation failures this is always "ValidationError".
-    /// For malformed/unparseable rows this is "UnsupportedFileType".
-    /// Maps to the errorCategory column in gfr-edg-rejected-dev.
+    /// Recommended values are ValidationError, MissingRequiredField,
+    /// InvalidAllowedValue, InvalidDataType, or MalformedInputRow.
     /// </summary>
-    public string ErrorCategory { get; set; } = string.Empty;
+    public string ErrorCategory { get; set; } = "ValidationError";
 
     public DateTime ErrorDateUtc { get; set; } = DateTime.UtcNow;
 
