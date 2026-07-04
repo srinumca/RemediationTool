@@ -8,6 +8,8 @@ namespace RemediationTool.Domain.Entities;
 /// </summary>
 public class FileFinding
 {
+    private string _findingType = string.Empty;
+
     // ── System-generated ─────────────────────────────────────────────────────
     public Guid Id { get; set; } = Guid.NewGuid();
     public string RecordVersionId { get; set; } = Guid.NewGuid().ToString("N");
@@ -28,8 +30,26 @@ public class FileFinding
     /// EDG finding type — plain string.
     /// Obsolete | Quarantined | Restoration | TotalPendingQuarantined |
     /// Exception | Error | Deleted | Restored | NotObsolete | Exclusion
+    ///
+    /// Initial ingestion status is derived from FindingType:
+    /// - Obsolete lands in NotYetStarted
+    /// - Other known lifecycle finding types land in their matching workflow status
+    /// After ingestion, quarantine/restore/delete services own all lifecycle transitions.
     /// </summary>
-    public string FindingType { get; set; } = string.Empty;
+    public string FindingType
+    {
+        get => _findingType;
+        set
+        {
+            _findingType = value ?? string.Empty;
+
+            // Apply this only during initial object creation/mapping.
+            // Once a lifecycle service has moved the record out of NotYetStarted,
+            // changing FindingType should not silently override the active workflow state.
+            if (Status == FileStatus.NotYetStarted)
+                Status = ResolveInitialStatusFromFindingType(_findingType);
+        }
+    }
 
     public string OriginatingDataSystem { get; set; } = string.Empty;
     public string OriginatingVendorTool { get; set; } = string.Empty;
@@ -95,6 +115,45 @@ public class FileFinding
 
     /// <summary>Validation error message set during ingestion. Not stored in DynamoDB.</summary>
     public string IngestionErrorReason { get; set; } = string.Empty;
+
+    // ── Initial ingestion status mapping ──────────────────────────────────────
+
+    /// <summary>
+    /// Resolves the initial UI/workflow status for a newly ingested row.
+    /// Obsolete records are the only records that land in NotYetStarted.
+    /// All other known finding types land in the corresponding lifecycle tab/status.
+    /// </summary>
+    public static FileStatus ResolveInitialStatusFromFindingType(string? findingType)
+    {
+        var normalized = NormalizeFindingType(findingType);
+
+        return normalized switch
+        {
+            "obsolete" => FileStatus.NotYetStarted,
+            "quarantined" => FileStatus.QuarantineComplete,
+            "totalpendingquarantined" => FileStatus.QuarantineComplete,
+            "restoration" => FileStatus.RestorationComplete,
+            "restored" => FileStatus.RestorationComplete,
+            "deleted" => FileStatus.DeletionComplete,
+            "exception" => FileStatus.Exception,
+            "exclusion" => FileStatus.Exception,
+            "notobsolete" => FileStatus.Exception,
+            "error" => FileStatus.Error,
+            _ => FileStatus.NotYetStarted
+        };
+    }
+
+    private static string NormalizeFindingType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        return value
+            .Trim()
+            .Replace(" ", string.Empty)
+            .Replace("_", string.Empty)
+            .Replace("-", string.Empty)
+            .ToLowerInvariant();
+    }
 
     // ── Compatibility properties ───────────────────────────────────────────────
     // Allow existing services to keep working without changes.
