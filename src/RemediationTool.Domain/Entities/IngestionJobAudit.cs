@@ -30,8 +30,11 @@ public class IngestionJobAudit
 
     public string InboundFileName { get; set; } = string.Empty;
 
-    /// <summary>Size of the uploaded file in bytes.</summary>
+    /// <summary>Size of the uploaded file in bytes. Maps to "inboundFileSizeBytes" in gfr-edg-reports-dev.</summary>
     public long FileSizeBytes { get; set; }
+
+    /// <summary>MIME type of the uploaded file e.g. "text/csv". New field — added to match gfr-edg-reports-dev export.</summary>
+    public string? InboundFileContentType { get; set; }
 
     /// <summary>File extension — csv or xlsx.</summary>
     public string FileFormat { get; set; } = string.Empty;

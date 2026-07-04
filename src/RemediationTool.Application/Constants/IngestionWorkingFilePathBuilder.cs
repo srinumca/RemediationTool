@@ -19,11 +19,6 @@ public static class IngestionWorkingFilePathBuilder
             .Replace("\\", "/");
             }
 
-    /// <summary>
-    /// Sanitizes the file name by removing invalid characters and replacing them with underscores.
-    /// </summary>
-    /// <param name="fileName"></param>
-    /// <returns></returns>
     private static string SanitizeFileNameWithoutExtension(string fileName)
     {
         var nameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);

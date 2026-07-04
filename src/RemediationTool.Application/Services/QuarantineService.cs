@@ -41,7 +41,6 @@ public class QuarantineService
 
     public async Task ProcessAsync()
     {
-        _logger.LogDebug("QuarantineService.ProcessAsync started");
         _logger.LogInformation("[QUARANTINE RUN START] Scanning for files with Status=PendingQuarantine...");
 
         var files = _repository.GetAll()
@@ -58,9 +57,6 @@ public class QuarantineService
         {
             try
             {
-                _logger.LogDebug("Processing quarantine for FileId: {Id}, FileName: {File}, LastModified: {LastModified}",
-                    file.Id, file.FileName, file.LastModifiedDate);
-
                 _logger.LogInformation(
                     "[QUARANTINE FILE] Id: {Id} FileName: {File} — starting quarantine.",
                     file.Id, file.FileName);
@@ -164,8 +160,6 @@ public class QuarantineService
         _logger.LogInformation(
             "[QUARANTINE RUN COMPLETE] Processed: {Processed} Succeeded: {Succeeded} Failed: {Failed} Skipped: {Skipped}",
             files.Count, succeeded, failed, skipped);
-
-        _logger.LogDebug("QuarantineService.ProcessAsync completed");
 
         await Task.CompletedTask;
     }

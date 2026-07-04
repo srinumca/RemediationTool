@@ -86,6 +86,7 @@ try
         builder.Services.AddSingleton<IRejectedRowRepository, DynamoDbRejectedRowRepository>();
         builder.Services.AddSingleton<IIngestionCheckpointRepository, DynamoDbIngestionCheckpointRepository>();
         builder.Services.AddSingleton<IIngestionStagingRepository, DynamoDbIngestionStagingRepository>();
+        builder.Services.AddScoped<DynamoDbTableInitialiser>();
     }
     else
     {

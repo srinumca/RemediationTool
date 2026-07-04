@@ -6,9 +6,9 @@
 /// Note: section key must be exactly "DynamoDB" (case-sensitive).
 ///
 /// Tables in use (5 — finding history table removed):
-///   gfr-edg-reports-dev             → job audit / report records
-///   gfr-edg-findings-dev            → valid ingested findings
-///   gfr-edg-rejected-dev            → validation failures
+///   gfr-file-metadata-dev           → job audit / report records
+///   gfr-file-findings-dev           → valid ingested findings
+///   gfr-rejected-rows-dev           → validation failures
 ///   gfr-ingestion-checkpoints-dev   → resume checkpoints
 ///   gfr-ingestion-staged-findings-dev → temp staging (TTL 7 days)
 /// </summary>

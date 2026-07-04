@@ -47,6 +47,14 @@ public class FileFinding
     /// </summary>
     public string? SourceSystemPlatform { get; set; }
 
+    /// <summary>
+    /// Error category for findings with FindingType = "Error".
+    /// e.g. "TimeoutException", "ConnectionRefused".
+    /// Confirmed present in both gfr-edg-findings-dev and gfr-edg-rejected-dev samples.
+    /// Empty string for non-error findings.
+    /// </summary>
+    public string? ErrorCategory { get; set; }
+
     // ── Optional metadata ─────────────────────────────────────────────────────
     public DateTime? LastModifiedDateUtc { get; set; }
     public DateTime? CreatedDateUtc { get; set; }

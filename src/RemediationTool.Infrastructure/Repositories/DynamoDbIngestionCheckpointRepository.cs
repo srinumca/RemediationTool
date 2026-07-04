@@ -25,11 +25,6 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
         _tableName = options.Value.CheckpointsTableName;
     }
 
-    /// <summary>
-    /// Retrieves an IngestionCheckpoint by its jobId from DynamoDB.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <returns></returns>
     public IngestionCheckpoint? GetByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return null;
@@ -47,11 +42,7 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
             ? DynamoDbAttributeMap.ToIngestionCheckpoint(response.Item)
             : null;
     }
-    
-    /// <summary>
-    /// Upserts an IngestionCheckpoint into DynamoDB.
-    /// </summary>
-    /// <param name="checkpoint"></param>
+
     public void Upsert(IngestionCheckpoint checkpoint)
     {
         if (checkpoint == null)

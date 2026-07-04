@@ -1,5 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
-using Parquet;
+﻿using Parquet;
 using Parquet.Schema;
 using Parquet.File;
 using Parquet.Data;
@@ -12,68 +11,43 @@ namespace RemediationTool.Infrastructure.Strategies;
 public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
 {
     private readonly IStorageService _storage;
-    private readonly ILogger<ParquetIngestionWorkingFileStrategy> _logger;
 
-    public ParquetIngestionWorkingFileStrategy(IStorageService storage, ILogger<ParquetIngestionWorkingFileStrategy> logger)
+    public ParquetIngestionWorkingFileStrategy(IStorageService storage)
     {
         _storage = storage;
-        _logger = logger;
     }
 
     public string Format => "Parquet";
 
-    /// <summary>
-    /// Writes a Parquet working file to the storage service with the provided valid findings.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <param name="inboundFileName"></param>
-    /// <param name="validFindings"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="ArgumentException"></exception>
-    /// <exception cref="ArgumentNullException"></exception>
     public async Task<IngestionWorkingFileResult> WriteAsync(
         string jobId,
         string inboundFileName,
         IReadOnlyList<FileFinding> validFindings,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Writing Parquet working file. JobId: {JobId}, FileName: {FileName}, RecordCount: {RecordCount}", 
-            jobId, inboundFileName, validFindings?.Count ?? 0);
-
         if (string.IsNullOrWhiteSpace(jobId))
-        {
-            _logger.LogWarning("WriteAsync rejected: JobId is required");
             throw new ArgumentException("JobId is required.", nameof(jobId));
-        }
 
         if (validFindings == null)
-        {
-            _logger.LogWarning("WriteAsync rejected: ValidFindings is null");
             throw new ArgumentNullException(nameof(validFindings));
-        }
 
-        try
-        {
-            var workingFilePath = IngestionWorkingFilePathBuilder.BuildParquetPath(
-                jobId, inboundFileName, DateTime.UtcNow);
+        var workingFilePath = IngestionWorkingFilePathBuilder.BuildParquetPath(
+            jobId, inboundFileName, DateTime.UtcNow);
 
-            _logger.LogDebug("Parquet working file path: {WorkingFilePath}", workingFilePath);
+        // System-generated fields
+        var idField = new DataField<string>("Id");
+        var recordVersionIdField = new DataField<string>("RecordVersionId");
+        var sourceRecordIdField = new DataField<string>("SourceRecordId");
+        var ingestionJobIdField = new DataField<string>("IngestionJobId");
+        var inboundFileNameField = new DataField<string>("InboundFileName");
+        var userNameField = new DataField<string>("UserName");
+        var loadDateUtcField = new DataField<DateTime>("LoadDateUtc");
+        var lastUpdateDateUtcField = new DataField<DateTime>("LastUpdateDateUtc");
 
-            // System-generated fields
-            var idField = new DataField<string>("Id");
-            var recordVersionIdField = new DataField<string>("RecordVersionId");
-            var sourceRecordIdField = new DataField<string>("SourceRecordId");
-            var ingestionJobIdField = new DataField<string>("IngestionJobId");
-            var inboundFileNameField = new DataField<string>("InboundFileName");
-            var userNameField = new DataField<string>("UserName");
-            var loadDateUtcField = new DataField<DateTime>("LoadDateUtc");
-            var lastUpdateDateUtcField = new DataField<DateTime>("LastUpdateDateUtc");
-
-            // Core finding fields
-            var findingFileNameField = new DataField<string>("FindingFileName");
-            var findingFileFormatField = new DataField<string>("FindingFileFormat");
-            var findingFileSizeBytesField = new DataField<long>("FindingFileSizeBytes");
+        // Core finding fields
+        var findingFileNameField = new DataField<string>("FindingFileName");
+        var findingFileFormatField = new DataField<string>("FindingFileFormat");
+        var findingFileSizeBytesField = new DataField<long>("FindingFileSizeBytes");
         var currentFileLocationField = new DataField<string>("CurrentFileLocation");
         var findingTypeField = new DataField<string>("FindingType");   // stored as enum string
         var dataSystemField = new DataField<string>("DataSystem");
@@ -188,39 +162,17 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
         parquetStream.Position = 0;
         await _storage.UploadAsync(workingFilePath, parquetStream);
 
-        _logger.LogInformation("Parquet working file written successfully. JobId: {JobId}, FilePath: {FilePath}, RecordCount: {RecordCount}, SizeBytes: {SizeBytes}", 
-            jobId, workingFilePath, validFindings.Count, parquetStream.Length);
-
         return new IngestionWorkingFileResult
         {
             Format = Format,
             Path = workingFilePath,
             RecordCount = validFindings.Count
         };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error writing Parquet working file. JobId: {JobId}, FileName: {FileName}", jobId, inboundFileName);
-            throw;
-        }
     }
 
-    /// <summary>
-    /// Converts a nullable string to an empty string if it is null or whitespace, otherwise trims the string.
-    /// </summary>
-    /// <param name="value"></param>
-    /// <returns></returns>
     private static string NullToEmpty(string? value)
         => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
-    /// <summary>
-    /// Reads a Parquet working file from the storage service starting after the specified last processed record count.
-    /// </summary>
-    /// <param name="workingFilePath"></param>
-    /// <param name="lastProcessedRecordCount"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="NotSupportedException"></exception>
     public Task<List<FileFinding>> ReadAfterAsync(
         string workingFilePath, int lastProcessedRecordCount,
         CancellationToken cancellationToken = default)

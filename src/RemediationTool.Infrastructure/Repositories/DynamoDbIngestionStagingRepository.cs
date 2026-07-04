@@ -25,12 +25,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         _tableName = options.Value.StagedFindingsTableName;
     }
 
-    /// <summary>
-    /// Save valid findings to DynamoDB in batches, with a TTL for automatic expiration.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <param name="validFindings"></param>
-    /// <exception cref="ArgumentException"></exception>
+    // -------------------------------------------------------------------------
+    // SaveValidFindings — idempotent (delete existing for jobId, write new)
+    // -------------------------------------------------------------------------
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
     {
         if (string.IsNullOrWhiteSpace(jobId))
@@ -73,12 +70,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
-    /// <summary>
-    /// Get all valid findings for a given jobId that have a SequenceNumber greater than lastProcessedRecordCount.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <param name="lastProcessedRecordCount"></param>
-    /// <returns></returns>
+    // -------------------------------------------------------------------------
+    // GetValidFindingsAfter — resume path, skips already-processed records
+    // -------------------------------------------------------------------------
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return new List<FileFinding>();
@@ -114,11 +108,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         return findings;
     }
 
-    /// <summary>
-    /// Count the number of staged findings for a given jobId.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <returns></returns>
+    // -------------------------------------------------------------------------
+    // CountByJobId
+    // -------------------------------------------------------------------------
     public int CountByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return 0;
@@ -137,10 +129,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         return response.Count ?? 0;
     }
 
-    /// <summary>
-    /// Deletes all staged findings for a given jobId from DynamoDB.
-    /// </summary>
-    /// <param name="jobId"></param>
+    // -------------------------------------------------------------------------
+    // DeleteByJobId — cleanup after successful completion
+    // -------------------------------------------------------------------------
     public void DeleteByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return;

@@ -97,18 +97,31 @@ public static class DynamoDbAttributeMap
     {
         var item = new Dictionary<string, AttributeValue>();
 
-        AddS(item, "uid", f.Id.ToString());
+        // CONFIRMED by Deepan (2026-07-01):
+        //   id  = the individual CSV row identifier (unique per finding row)
+        //   uid = the parent job's id from gfr-edg-reports-dev (= reportUid / jobId)
+        // So: id  → FileFinding.Id       (the row's own GUID)
+        //     uid → FileFinding.IngestionJobId  (the job it belongs to)
+        AddS(item, "id", f.Id.ToString());
+        AddS(item, "uid", f.IngestionJobId); // job link — replaces old "jobId" attribute name
 
+        // TYPE CHANGE: recordVersionId is now stored as a DynamoDB Number (e.g. 1, 2, 3)
+        // instead of the previous 32-char hex string. The C# property itself stays
+        // string (Guid.NewGuid().ToString("N") default) to avoid breaking any other
+        // code that reads FileFinding.RecordVersionId as text — only the DynamoDB
+        // wire format changes here, parsed/formatted at this boundary.
         if (int.TryParse(f.RecordVersionId, out var versionAsInt))
             AddN(item, "recordVersionId", versionAsInt);
         else
             AddN(item, "recordVersionId", 1); // fallback for non-numeric legacy values
 
         AddS(item, "sourceRecordId", f.SourceRecordId);
-        AddS(item, "jobId", f.IngestionJobId);
+        // NOTE: old attribute "jobId" removed — "uid" now carries the job link
+        // in gfr-edg-findings-dev (confirmed by Deepan 2026-07-01)
         AddS(item, "inboundFileName", f.InboundFileName);
         AddS(item, "userName", f.UserName);
 
+        // RENAMED: loadDateUtc -> rowCreatedDateOn (per gfr-edg-findings-dev export)
         AddDate(item, "rowCreatedDateOn", f.LoadDateUtc);
         AddDate(item, "lastUpdateDateUtc", f.LastUpdateDateUtc);
         AddS(item, "findingFileName", f.FindingFileName);
@@ -119,8 +132,11 @@ public static class DynamoDbAttributeMap
         AddS(item, "originatingDataSystem", f.OriginatingDataSystem);
         AddS(item, "originatingVendorTool", f.OriginatingVendorTool);
 
+        // NEW FIELD — confirmed in both findings and rejected samples
         AddS(item, "dataSystem", f.SourceSystemPlatform);
+        AddS(item, "errorCategory", f.ErrorCategory ?? string.Empty);
 
+        // RENAMED: lastModifiedDateUtc -> fileLastModifiedOn (per export)
         AddNullableDate(item, "fileLastModifiedOn", f.LastModifiedDateUtc);
         AddNullableDate(item, "createdDateUtc", f.CreatedDateUtc);
         AddNullableDate(item, "lastAccessedDateUtc", f.LastAccessedDateUtc);
@@ -135,6 +151,12 @@ public static class DynamoDbAttributeMap
         AddS(item, "restorationTicketIdentifier", f.RestorationTicketIdentifier);
         AddS(item, "restorationRequestorEmail", f.RestorationRequestorEmail);
         AddS(item, "restorationComment", f.RestorationComment);
+
+        // NOTE: export sample uses "Status" (capital S) while every other
+        // attribute in this table is camelCase. Writing lowercase "status"
+        // here for internal consistency with the rest of this mapper — if
+        // the live table genuinely requires capital-S "Status" as the
+        // attribute name, change the key below to "Status" to match exactly.
         AddS(item, "status", f.Status.ToString());
         AddS(item, "errorReason", f.ErrorReason);
 
@@ -148,17 +170,26 @@ public static class DynamoDbAttributeMap
 
         return new FileFinding
         {
-            Id = Guid.TryParse(GetS(item, "uid") ?? GetS(item, "id"), out var id) ? id : Guid.NewGuid(),
+            // CONFIRMED by Deepan (2026-07-01):
+            // id  = the individual row's GUID
+            // uid = the parent job id from gfr-edg-reports-dev (= reportUid)
+            Id = Guid.TryParse(GetS(item, "id"), out var id) ? id : Guid.NewGuid(),
 
+            // recordVersionId now read as a Number; falls back to the legacy
+            // string attribute if the Number isn't present (pre-migration rows).
             RecordVersionId = item.TryGetValue("recordVersionId", out var rv) && rv.N != null
                 ? rv.N
                 : GetSOrEmpty(item, "recordVersionId"),
 
             SourceRecordId = GetS(item, "sourceRecordId"),
-            IngestionJobId = GetS(item, "jobId"),
+
+            // uid is the new name for the job link (old attribute was "jobId")
+            // Reads "uid" first, falls back to legacy "jobId" for pre-migration rows.
+            IngestionJobId = GetS(item, "uid") ?? GetSOrEmpty(item, "jobId"),
             InboundFileName = GetSOrEmpty(item, "inboundFileName"),
             UserName = GetSOrEmpty(item, "userName"),
 
+            // RENAMED: reads "rowCreatedDateOn" now, falls back to legacy "loadDateUtc"
             LoadDateUtc = item.ContainsKey("rowCreatedDateOn")
                 ? GetDateOrDefault(item, "rowCreatedDateOn")
                 : GetDateOrDefault(item, "loadDateUtc"),
@@ -173,7 +204,9 @@ public static class DynamoDbAttributeMap
             OriginatingVendorTool = GetSOrEmpty(item, "originatingVendorTool"),
 
             SourceSystemPlatform = GetS(item, "dataSystem"),
+            ErrorCategory = GetS(item, "errorCategory"),
 
+            // RENAMED: reads "fileLastModifiedOn" now, falls back to legacy "lastModifiedDateUtc"
             LastModifiedDateUtc = item.ContainsKey("fileLastModifiedOn")
                 ? GetNullableDate(item, "fileLastModifiedOn")
                 : GetNullableDate(item, "lastModifiedDateUtc"),
@@ -204,30 +237,29 @@ public static class DynamoDbAttributeMap
         var item = new Dictionary<string, AttributeValue>();
 
         AddS(item, "jobId", a.JobId);
-
         AddS(item, "uid", a.ReportUid);
         AddS(item, "inboundFileName", a.InboundFileName);
-        AddN(item, "fileSizeBytes", a.FileSizeBytes);
+
+        // Sample uses "inboundFileSizeBytes" not "fileSizeBytes"
+        AddN(item, "inboundFileSizeBytes", a.FileSizeBytes);
+        AddS(item, "inboundFileContentType", a.InboundFileContentType);  // new field
         AddS(item, "fileFormat", a.FileFormat);
         AddS(item, "s3FolderPath", a.S3FolderPath);
-
         AddS(item, "s3FilePath", a.SourceFilePath);
-
         AddS(item, "processingSummaryPath", a.MetadataJsonPath);
-
         AddS(item, "workingFilePath", a.WorkingFilePath);
         AddS(item, "workingFileFormat", a.WorkingFileFormat);
         AddN(item, "workingFileRecordCount", a.WorkingFileRecordCount);
-        AddS(item, "uploadedBy", a.UploadedBy);
+        AddS(item, "UploadedBy", a.UploadedBy);              // PascalCase — matches sample
         AddS(item, "userName", a.UserName);
         AddS(item, "startedBy", a.StartedBy);
-
         AddS(item, "UploadedDisplayName", a.UploadedDisplayName);
         AddS(item, "UploadedEmailId", a.UploadedEmailId);
         AddS(item, "inboundFileChecksum", a.InboundFileChecksum);
-
         AddDate(item, "startTimestampUtc", a.StartTimestampUtc);
         AddNullableDate(item, "endTimestampUtc", a.EndTimestampUtc);
+
+        // Status stored as string — "Completed", "Failed", etc.
         AddS(item, "status", a.Status.ToString());
         AddS(item, "errorMessage", a.ErrorMessage);
         AddS(item, "failureReason", a.FailureReason);
@@ -239,7 +271,15 @@ public static class DynamoDbAttributeMap
         AddN(item, "successCount", a.SuccessCount);
         AddN(item, "rejectCount", a.RejectCount);
         AddN(item, "validationFailureCount", a.ValidationFailureCount);
-        AddIntMap(item, "findingTypeCounts", a.FindingTypeCounts);
+
+        // Sample stores findingTypeCounts as a JSON string e.g. "{\"Obsolete\":10,\"Quarantined\":6}"
+        // not as a DynamoDB Map — write as a serialised JSON string to match exactly
+        if (a.FindingTypeCounts != null && a.FindingTypeCounts.Count > 0)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(a.FindingTypeCounts);
+            AddS(item, "findingTypeCounts", json);
+        }
+
         AddN(item, "batchSize", a.BatchSize);
         AddN(item, "totalBatches", a.TotalBatches);
         AddN(item, "persistedBatchCount", a.PersistedBatchCount);
@@ -262,29 +302,28 @@ public static class DynamoDbAttributeMap
         return new IngestionJobAudit
         {
             JobId = GetSOrEmpty(item, "jobId"),
-
             ReportUid = GetS(item, "uid") ?? GetSOrEmpty(item, "reportUid"),
-
             InboundFileName = GetSOrEmpty(item, "inboundFileName"),
-            FileSizeBytes = GetLongOrZero(item, "fileSizeBytes"),
+
+            // "inboundFileSizeBytes" in new table, "fileSizeBytes" in old
+            FileSizeBytes = item.ContainsKey("inboundFileSizeBytes")
+                ? GetLongOrZero(item, "inboundFileSizeBytes")
+                : GetLongOrZero(item, "fileSizeBytes"),
+
+            InboundFileContentType = GetS(item, "inboundFileContentType"),
             FileFormat = GetSOrEmpty(item, "fileFormat"),
             S3FolderPath = GetSOrEmpty(item, "s3FolderPath"),
-
             SourceFilePath = GetS(item, "s3FilePath") ?? GetSOrEmpty(item, "sourceFilePath"),
-
             MetadataJsonPath = GetS(item, "processingSummaryPath") ?? GetSOrEmpty(item, "metadataJsonPath"),
-
             WorkingFilePath = GetS(item, "workingFilePath"),
             WorkingFileFormat = GetS(item, "workingFileFormat"),
             WorkingFileRecordCount = GetIntOrZero(item, "workingFileRecordCount"),
-            UploadedBy = GetSOrEmpty(item, "uploadedBy"),
+            UploadedBy = GetS(item, "UploadedBy") ?? GetSOrEmpty(item, "uploadedBy"),
             UserName = GetSOrEmpty(item, "userName"),
             StartedBy = GetSOrEmpty(item, "startedBy"),
-
             UploadedDisplayName = GetS(item, "UploadedDisplayName"),
             UploadedEmailId = GetS(item, "UploadedEmailId"),
             InboundFileChecksum = GetS(item, "inboundFileChecksum"),
-
             StartTimestampUtc = GetDateOrDefault(item, "startTimestampUtc"),
             EndTimestampUtc = GetNullableDate(item, "endTimestampUtc"),
             Status = status,
@@ -298,7 +337,13 @@ public static class DynamoDbAttributeMap
             SuccessCount = GetIntOrZero(item, "successCount"),
             RejectCount = GetIntOrZero(item, "rejectCount"),
             ValidationFailureCount = GetIntOrZero(item, "validationFailureCount"),
-            FindingTypeCounts = GetIntMap(item, "findingTypeCounts"),
+
+            // findingTypeCounts stored as JSON string in new table, DynamoDB Map in old
+            FindingTypeCounts = item.TryGetValue("findingTypeCounts", out var ftc)
+                ? (ftc.S != null
+                    ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(ftc.S) ?? new()
+                    : GetIntMap(item, "findingTypeCounts"))
+                : new Dictionary<string, int>(),
             BatchSize = GetIntOrZero(item, "batchSize"),
             TotalBatches = GetIntOrZero(item, "totalBatches"),
             PersistedBatchCount = GetIntOrZero(item, "persistedBatchCount"),
@@ -314,26 +359,51 @@ public static class DynamoDbAttributeMap
     }
 
     // =========================================================================
-    // RejectedRowDetail  <->  gfr-rejected-rows-dev
+    // RejectedRowDetail  <->  gfr-edg-rejected-dev
     // =========================================================================
 
     public static Dictionary<string, AttributeValue> ToMap(RejectedRowDetail r)
     {
         var item = new Dictionary<string, AttributeValue>();
 
-        AddS(item, "rejectedRowId", r.RejectedRowId);
-        AddS(item, "jobId", r.JobId);
-        AddS(item, "inboundFileName", r.InboundFileName);
-        AddS(item, "sourceRecordId", r.SourceRecordId);
-        AddS(item, "findingFileName", r.FindingFileName);
-        AddS(item, "findingType", r.FindingType);
-        AddS(item, "userName", r.UserName);
-        AddN(item, "rowNumber", r.RowNumber);
-        AddS(item, "fieldName", r.FieldName);
-        AddS(item, "rejectedValue", r.RejectedValue);
-        AddS(item, "errorReason", r.ErrorReason);
-        AddDate(item, "errorDateUtc", r.ErrorDateUtc);
-        AddS(item, "rawRowJson", r.RawRowJson);
+        // Schema confirmed from gfr-edg-rejected-dev sample (2026-07-01)
+        // id  = unique row GUID (was "rejectedRowId")
+        // uid = job link / reportUid (was "jobId") — same pattern as findings table
+        AddS(item, "id",  r.Id);
+        AddS(item, "uid", r.Uid);
+
+        AddS(item, "inboundFileName",       r.InboundFileName);
+        AddS(item, "sourceRecordId",        r.SourceRecordId);
+        AddS(item, "findingFileName",       r.FindingFileName);
+        AddS(item, "findingType",           r.FindingType ?? "Error");
+        AddS(item, "userName",              r.UserName);
+        AddS(item, "currentFileLocation",   r.CurrentFileLocation);
+        AddS(item, "dataSystem",            r.DataSystem);
+        AddS(item, "fileOwner",             r.FileOwner);
+        AddS(item, "siteOwner",             r.SiteOwner);
+        AddS(item, "findingFileFormat",     r.FindingFileFormat);
+        AddS(item, "originatingDataSystem", r.OriginatingDataSystem);
+        AddS(item, "originatingVendorTool", r.OriginatingVendorTool);
+        AddS(item, "quarantineDate",        r.QuarantineDate ?? string.Empty);
+        AddS(item, "Status",                r.Status);     // PascalCase — matches sample
+
+        if (r.FindingFileSizeBytes.HasValue)
+            AddNullableN(item, "findingFileSizeBytes", r.FindingFileSizeBytes);
+
+        AddN(item, "recordVersionId", r.RecordVersionId);
+        AddDate(item, "rowCreatedDateOn", r.ErrorDateUtc);
+        AddNullableDate(item, "fileLastModifiedOn", r.FileLastModifiedOn);
+
+        // Infrastructure error fields (new in gfr-edg-rejected-dev)
+        AddS(item, "errorCategory", r.ErrorCategory);
+        AddS(item, "stackTrace",    r.StackTrace);
+
+        // CSV validation rejection fields (kept for row-level validation errors)
+        AddN(item, "rowNumber",         r.RowNumber);
+        AddS(item, "fieldName",         r.FieldName);
+        AddS(item, "rejectedValue",     r.RejectedValue);
+        AddS(item, "errorReason",       r.ErrorReason);
+        AddS(item, "rawRowJson",        r.RawRowJson);
 
         return item;
     }
@@ -342,19 +412,33 @@ public static class DynamoDbAttributeMap
     {
         return new RejectedRowDetail
         {
-            RejectedRowId = GetSOrEmpty(item, "rejectedRowId"),
-            JobId = GetSOrEmpty(item, "jobId"),
-            InboundFileName = GetSOrEmpty(item, "inboundFileName"),
-            SourceRecordId = GetS(item, "sourceRecordId"),
-            FindingFileName = GetS(item, "findingFileName"),
-            FindingType = GetS(item, "findingType"),
-            UserName = GetS(item, "userName"),
-            RowNumber = GetIntOrZero(item, "rowNumber"),
-            FieldName = GetSOrEmpty(item, "fieldName"),
-            RejectedValue = GetS(item, "rejectedValue"),
-            ErrorReason = GetSOrEmpty(item, "errorReason"),
-            ErrorDateUtc = GetDateOrDefault(item, "errorDateUtc"),
-            RawRowJson = GetS(item, "rawRowJson"),
+            Id                  = GetS(item, "id")  ?? Guid.NewGuid().ToString(),
+            Uid                 = GetS(item, "uid") ?? GetSOrEmpty(item, "jobId"),  // fallback for pre-migration rows
+            InboundFileName     = GetSOrEmpty(item, "inboundFileName"),
+            SourceRecordId      = GetS(item, "sourceRecordId"),
+            FindingFileName     = GetS(item, "findingFileName"),
+            FindingType         = GetS(item, "findingType"),
+            UserName            = GetS(item, "userName"),
+            CurrentFileLocation = GetS(item, "currentFileLocation"),
+            DataSystem          = GetS(item, "dataSystem"),
+            FileOwner           = GetS(item, "fileOwner"),
+            SiteOwner           = GetS(item, "siteOwner"),
+            FindingFileFormat   = GetS(item, "findingFileFormat"),
+            FindingFileSizeBytes = GetNullableLong(item, "findingFileSizeBytes"),
+            OriginatingDataSystem = GetSOrEmpty(item, "originatingDataSystem"),
+            OriginatingVendorTool = GetSOrEmpty(item, "originatingVendorTool"),
+            QuarantineDate      = GetS(item, "quarantineDate"),
+            Status              = GetS(item, "Status") ?? GetSOrEmpty(item, "status"),
+            RecordVersionId     = GetIntOrZero(item, "recordVersionId"),
+            ErrorDateUtc        = GetDateOrDefault(item, "rowCreatedDateOn"),
+            FileLastModifiedOn  = GetNullableDate(item, "fileLastModifiedOn"),
+            ErrorCategory       = GetS(item, "errorCategory"),
+            StackTrace          = GetS(item, "stackTrace"),
+            RowNumber           = GetIntOrZero(item, "rowNumber"),
+            FieldName           = GetSOrEmpty(item, "fieldName"),
+            RejectedValue       = GetS(item, "rejectedValue"),
+            ErrorReason         = GetSOrEmpty(item, "errorReason"),
+            RawRowJson          = GetS(item, "rawRowJson"),
         };
     }
 

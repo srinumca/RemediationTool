@@ -1,6 +1,5 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Domain.Entities;
 
@@ -11,17 +10,13 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
     private readonly string _filePath;
     private readonly object _lock = new();
     private readonly JsonSerializerOptions _jsonOptions;
-    private readonly ILogger<JsonIngestionStagingRepository> _logger;
 
-    public JsonIngestionStagingRepository(ILogger<JsonIngestionStagingRepository> logger)
+    public JsonIngestionStagingRepository()
     {
-        _logger = logger;
         var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
 
         _filePath = Path.Combine(dataDirectory, "ingestion-staged-findings.json");
-
-        _logger.LogInformation("JsonIngestionStagingRepository initialized with FilePath: {FilePath}", _filePath);
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -30,15 +25,8 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         };
     }
 
-    /// <summary>
-    /// Saves valid findings for a given JobId. If there are existing staged records for the same JobId, they will be replaced (idempotent on re-upload).
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <param name="validFindings"></param>
-    /// <exception cref="ArgumentException"></exception>
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
     {
-        _logger.LogInformation("Saving {Count} valid findings for JobId: {JobId}", validFindings?.Count ?? 0, jobId);
         if (string.IsNullOrWhiteSpace(jobId))
             throw new ArgumentException("JobId is required.", nameof(jobId));
 
@@ -68,12 +56,6 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
-    /// <summary>
-    /// Retrieves valid findings for a given JobId that have a SequenceNumber greater than the provided lastProcessedRecordCount. This allows for incremental processing of staged findings.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <param name="lastProcessedRecordCount"></param>
-    /// <returns></returns>
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
     {
         if (string.IsNullOrWhiteSpace(jobId))
@@ -91,11 +73,6 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
-    /// <summary>
-    /// Counts the number of staged records for a given JobId. This can be used to determine how many records are available for processing.
-    /// </summary>
-    /// <param name="jobId"></param>
-    /// <returns></returns>
     public int CountByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId))
@@ -129,10 +106,6 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
-    /// <summary>
-    /// Loads all staged findings from the JSON file. If the file does not exist or is empty, returns an empty list.
-    /// </summary>
-    /// <returns></returns>
     private List<IngestionStagedFinding> LoadAll()
     {
         if (!File.Exists(_filePath))
@@ -147,10 +120,6 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
                ?? new List<IngestionStagedFinding>();
     }
 
-    /// <summary>
-    /// Saves all staged findings to the JSON file, overwriting any existing content. This is called after adding or removing records to ensure the file reflects the current state.
-    /// </summary>
-    /// <param name="stagedFindings"></param>
     private void SaveAll(List<IngestionStagedFinding> stagedFindings)
     {
         var json = JsonSerializer.Serialize(stagedFindings, _jsonOptions);
