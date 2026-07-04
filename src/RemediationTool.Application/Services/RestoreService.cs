@@ -3,6 +3,7 @@ using RemediationTool.Application.Logging;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enums;
 
 namespace RemediationTool.Application.Services;
 
@@ -38,6 +39,19 @@ public class RestoreService
             return;
         }
 
+        if (file.Status == FileStatus.RestorationComplete)
+        {
+            file.ErrorCategory = ErrorCategoryResolver.DuplicateRestoreAttempt().ToString();
+            file.ErrorReason = "Restore skipped because the file is already restored.";
+            file.UpdatedDate = DateTime.UtcNow;
+            _repository.Update(file);
+
+            _logger.LogWarning(
+                "[RESTORE DUPLICATE] FileId: {Id} FileName: {File} — file is already restored.",
+                id, file.FileName);
+            return;
+        }
+
         if (file.Status != FileStatus.QuarantineComplete &&
             file.Status != FileStatus.PendingRestore)
         {
@@ -47,19 +61,42 @@ public class RestoreService
             return;
         }
 
+        // Capture paths before changing Status to InProgress.
+        // FileFinding.QuarantinePath is a compatibility property that returns a value
+        // only when Status == QuarantineComplete, so reading it after setting InProgress
+        // would incorrectly return null.
+        var quarantinePath = file.QuarantinePath;
+        var originalPath = file.OriginalFileLocation ?? file.FilePath;
+
         try
         {
-            file.Status = FileStatus.InProgress;
-            file.UpdatedDate = DateTime.UtcNow;
-            _repository.Update(file);
+            if (string.IsNullOrWhiteSpace(originalPath))
+            {
+                file.Status = FileStatus.Error;
+                file.ErrorReason = "Restore target path is missing.";
+                file.ErrorCategory = ErrorCategoryResolver.TargetPathMissing().ToString();
+                file.UpdatedDate = DateTime.UtcNow;
+                _repository.Update(file);
 
-            var quarantinePath = file.QuarantinePath;
-            var originalPath = file.OriginalFileLocation ?? file.FilePath;
+                _logger.LogError(
+                    "[RESTORE FAILED] FileId: {Id} FileName: {File} — restore target path is missing.",
+                    id, file.FileName);
+
+                _auditLogger.RecordEvent(
+                    eventType: "FileRestored",
+                    entityId: file.Id.ToString(),
+                    actor: "System",
+                    outcome: "Failed",
+                    details: new { file.FileName, Error = "Restore target path is missing" });
+
+                return;
+            }
 
             if (string.IsNullOrWhiteSpace(quarantinePath) || !File.Exists(quarantinePath))
             {
                 file.Status = FileStatus.Error;
                 file.ErrorReason = $"Quarantine file not found: {quarantinePath}";
+                file.ErrorCategory = ErrorCategoryResolver.QuarantineFileMissing().ToString();
                 file.UpdatedDate = DateTime.UtcNow;
                 _repository.Update(file);
 
@@ -76,6 +113,10 @@ public class RestoreService
 
                 return;
             }
+
+            file.Status = FileStatus.InProgress;
+            file.UpdatedDate = DateTime.UtcNow;
+            _repository.Update(file);
 
             var dir = Path.GetDirectoryName(originalPath);
             if (!string.IsNullOrWhiteSpace(dir))
@@ -100,6 +141,8 @@ public class RestoreService
             file.Status = FileStatus.RestorationComplete;
             file.RestoredDateUtc = DateTime.UtcNow;
             file.QuarantinePath = null;
+            file.ErrorCategory = ErrorCategory.None.ToString();
+            file.ErrorReason = string.Empty;
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
@@ -116,8 +159,11 @@ public class RestoreService
         }
         catch (Exception ex)
         {
+            var category = ErrorCategoryResolver.FromException(ex);
+
             file.Status = FileStatus.Error;
             file.ErrorReason = ex.Message;
+            file.ErrorCategory = category.ToString();
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
@@ -130,7 +176,7 @@ public class RestoreService
                 entityId: file.Id.ToString(),
                 actor: "System",
                 outcome: "Failed",
-                details: new { file.FileName, Error = ex.Message });
+                details: new { file.FileName, Error = ex.Message, ErrorCategory = category.ToString() });
         }
     }
 
@@ -143,9 +189,28 @@ public class RestoreService
 
         _logger.LogInformation("[RESTORE ALL START] Found {Count} file(s) eligible for restore.", files.Count);
 
+        var succeeded = 0;
+        var failed = 0;
+
         foreach (var file in files)
+        {
             await RestoreAsync(file.Id);
 
-        _logger.LogInformation("[RESTORE ALL COMPLETE] Processed {Count} file(s).", files.Count);
+            var updated = _repository.GetById(file.Id);
+            if (updated?.Status == FileStatus.RestorationComplete)
+                succeeded++;
+            else if (updated?.Status == FileStatus.Error)
+                failed++;
+        }
+
+        if (succeeded > 0 && failed > 0)
+        {
+            _logger.LogWarning(
+                "[RESTORE ALL PARTIAL FAILURE] Succeeded: {Succeeded}, Failed: {Failed}, ErrorCategory: {ErrorCategory}",
+                succeeded, failed, ErrorCategoryResolver.PartialRestoreFailure());
+        }
+
+        _logger.LogInformation("[RESTORE ALL COMPLETE] Processed {Count} file(s). Succeeded: {Succeeded}, Failed: {Failed}",
+            files.Count, succeeded, failed);
     }
 }
