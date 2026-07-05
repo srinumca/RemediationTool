@@ -16,7 +16,9 @@ public interface IQuarantineFileService
 
     Task<bool> ExistsAsync(string path, CancellationToken cancellationToken = default);
 
-    Task MoveAsync(string sourcePath, string quarantinePath, CancellationToken cancellationToken = default);
+    Task CopyAsync(string sourcePath, string quarantinePath, CancellationToken cancellationToken = default);
 
     Task WriteStubAsync(string stubPath, string message, CancellationToken cancellationToken = default);
+
+    Task DeleteSourceAsync(string sourcePath, CancellationToken cancellationToken = default);
 }
