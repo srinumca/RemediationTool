@@ -1,4 +1,4 @@
-﻿using Amazon.DynamoDBv2.Model;
+using Amazon.DynamoDBv2.Model;
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
@@ -157,7 +157,7 @@ public static class DynamoDbAttributeMap
         // here for internal consistency with the rest of this mapper — if
         // the live table genuinely requires capital-S "Status" as the
         // attribute name, change the key below to "Status" to match exactly.
-        AddS(item, "status", f.Status.ToString());
+        AddS(item, "status", f.StatusColumnValue);
         AddS(item, "errorReason", f.ErrorReason);
 
         return item;
@@ -166,7 +166,7 @@ public static class DynamoDbAttributeMap
     public static FileFinding ToFileFinding(Dictionary<string, AttributeValue> item)
     {
         var statusRaw = GetS(item, "status") ?? GetS(item, "Status");
-        Enum.TryParse<FileStatus>(statusRaw, ignoreCase: true, out var parsedStatus);
+        var parsedStatus = FileFinding.ResolveStatusFromStoredValue(statusRaw);
 
         return new FileFinding
         {
@@ -224,6 +224,7 @@ public static class DynamoDbAttributeMap
             RestorationRequestorEmail = GetS(item, "restorationRequestorEmail"),
             RestorationComment = GetS(item, "restorationComment"),
             Status = parsedStatus,
+            StatusColumnValue = statusRaw ?? parsedStatus.ToString(),
             ErrorReason = GetSOrEmpty(item, "errorReason"),
         };
     }
