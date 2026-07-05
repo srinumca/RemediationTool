@@ -1,4 +1,4 @@
-﻿namespace RemediationTool.Application.Options;
+namespace RemediationTool.Application.Options;
 
 public class IngestionProcessingOptions
 {
@@ -19,4 +19,13 @@ public class IngestionProcessingOptions
     public bool EnableParquetWorkingFile { get; set; } = true;
 
     public int ParquetRowGroupSize { get; set; } = 10000;
+
+    /// <summary>
+    /// Maximum inbound CSV/XLSX upload size in MB.
+    /// This value is used both by ASP.NET Core request/form limits and by
+    /// ingestion file validation so large-file behavior is consistent.
+    /// </summary>
+    public int MaxUploadFileSizeMb { get; set; } = 500;
+
+    public long MaxUploadFileSizeBytes => MaxUploadFileSizeMb * 1024L * 1024L;
 }
