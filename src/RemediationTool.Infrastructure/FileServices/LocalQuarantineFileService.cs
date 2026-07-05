@@ -57,7 +57,7 @@ public sealed class LocalQuarantineFileService : IQuarantineFileService
     public Task<bool> ExistsAsync(string path, CancellationToken cancellationToken = default)
         => Task.FromResult(!string.IsNullOrWhiteSpace(path) && File.Exists(path));
 
-    public async Task MoveAsync(string sourcePath, string quarantinePath, CancellationToken cancellationToken = default)
+    public async Task CopyAsync(string sourcePath, string quarantinePath, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
             throw new ArgumentException("Source path is required.", nameof(sourcePath));
@@ -72,13 +72,9 @@ public sealed class LocalQuarantineFileService : IQuarantineFileService
         if (!string.IsNullOrWhiteSpace(quarantineDirectory))
             Directory.CreateDirectory(quarantineDirectory);
 
-        await using (var sourceStream = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        await using (var destinationStream = File.Create(quarantinePath))
-        {
-            await sourceStream.CopyToAsync(destinationStream, cancellationToken);
-        }
-
-        File.Delete(sourcePath);
+        await using var sourceStream = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var destinationStream = File.Create(quarantinePath);
+        await sourceStream.CopyToAsync(destinationStream, cancellationToken);
     }
 
     public async Task WriteStubAsync(string stubPath, string message, CancellationToken cancellationToken = default)
@@ -91,6 +87,17 @@ public sealed class LocalQuarantineFileService : IQuarantineFileService
             Directory.CreateDirectory(directory);
 
         await File.WriteAllTextAsync(stubPath, message, cancellationToken);
+    }
+
+    public Task DeleteSourceAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+            throw new ArgumentException("Source path is required.", nameof(sourcePath));
+
+        if (File.Exists(sourcePath))
+            File.Delete(sourcePath);
+
+        return Task.CompletedTask;
     }
 
     private static string GetFullPath(string path)
