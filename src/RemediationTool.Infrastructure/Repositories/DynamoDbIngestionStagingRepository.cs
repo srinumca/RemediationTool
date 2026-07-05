@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
+using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Infrastructure.DynamoDB;
 using RemediationTool.Infrastructure.Strategies;
