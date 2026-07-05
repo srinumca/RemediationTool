@@ -9,6 +9,7 @@ namespace RemediationTool.Domain.Entities;
 public class FileFinding
 {
     private string _findingType = string.Empty;
+    private FileStatus _status = FileStatus.NotYetStarted;
 
     // ── System-generated ─────────────────────────────────────────────────────
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -31,9 +32,9 @@ public class FileFinding
     /// Obsolete | Quarantined | Restoration | TotalPendingQuarantined |
     /// Exception | Error | Deleted | Restored | NotObsolete | Exclusion
     ///
-    /// Initial ingestion status is derived from FindingType:
-    /// - Obsolete lands in NotYetStarted
-    /// - Other known lifecycle finding types land in their matching workflow status
+    /// Initial ingestion status rule:
+    /// - Obsolete lands as NotYetStarted
+    /// - Every other finding type lands with the same value as FindingType in the persisted status column
     /// After ingestion, quarantine/restore/delete services own all lifecycle transitions.
     /// </summary>
     public string FindingType
@@ -43,11 +44,11 @@ public class FileFinding
         {
             _findingType = value ?? string.Empty;
 
-            // Apply this only during initial object creation/mapping.
-            // Once a lifecycle service has moved the record out of NotYetStarted,
-            // changing FindingType should not silently override the active workflow state.
-            if (Status == FileStatus.NotYetStarted)
+            if (IsInitialStatusAssignmentAllowed())
+            {
                 Status = ResolveInitialStatusFromFindingType(_findingType);
+                StatusColumnValue = ResolveInitialStatusColumnValueFromFindingType(_findingType);
+            }
         }
     }
 
@@ -108,7 +109,23 @@ public class FileFinding
     public string? RestorationComment { get; set; }
 
     // ── GFR workflow status ───────────────────────────────────────────────────
-    public FileStatus Status { get; set; } = FileStatus.NotYetStarted;
+    public FileStatus Status
+    {
+        get => _status;
+        set
+        {
+            _status = value;
+            StatusColumnValue = value.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Exact string value to persist into the database status column.
+    /// During initial ingestion this can intentionally differ from the FileStatus enum
+    /// so non-obsolete rows can store status exactly equal to FindingType.
+    /// Lifecycle services update this automatically through the Status setter.
+    /// </summary>
+    public string StatusColumnValue { get; set; } = FileStatus.NotYetStarted.ToString();
 
     // ── Ingestion pipeline fields (NOT persisted to DynamoDB) ─────────────────
     public bool IsValid { get; set; } = true;
@@ -119,31 +136,65 @@ public class FileFinding
     // ── Initial ingestion status mapping ──────────────────────────────────────
 
     /// <summary>
-    /// Resolves the initial UI/workflow status for a newly ingested row.
-    /// Obsolete records are the only records that land in NotYetStarted.
-    /// All other known finding types land in the corresponding lifecycle tab/status.
+    /// Resolves the in-memory workflow status for a newly ingested row.
+    /// The database status column is resolved separately by ResolveInitialStatusColumnValueFromFindingType.
     /// </summary>
     public static FileStatus ResolveInitialStatusFromFindingType(string? findingType)
     {
-        var normalized = NormalizeFindingType(findingType);
+        var normalized = NormalizeStatusValue(findingType);
 
         return normalized switch
         {
             "obsolete" => FileStatus.NotYetStarted,
-            "quarantined" => FileStatus.QuarantineComplete,
-            "totalpendingquarantined" => FileStatus.QuarantineComplete,
-            "restoration" => FileStatus.RestorationComplete,
-            "restored" => FileStatus.RestorationComplete,
-            "deleted" => FileStatus.DeletionComplete,
+            "quarantined" => FileStatus.Quarantined,
+            "totalpendingquarantined" => FileStatus.TotalPendingQuarantined,
+            "restoration" => FileStatus.Restoration,
+            "restored" => FileStatus.Restored,
+            "deleted" => FileStatus.Deleted,
             "exception" => FileStatus.Exception,
-            "exclusion" => FileStatus.Exception,
-            "notobsolete" => FileStatus.Exception,
+            "exclusion" => FileStatus.Exclusion,
+            "notobsolete" => FileStatus.NotObsolete,
             "error" => FileStatus.Error,
             _ => FileStatus.NotYetStarted
         };
     }
 
-    private static string NormalizeFindingType(string? value)
+    /// <summary>
+    /// Resolves the exact value stored in the status column during ingestion.
+    /// Business rule: Obsolete -> NotYetStarted; all other values -> same as FindingType.
+    /// </summary>
+    public static string ResolveInitialStatusColumnValueFromFindingType(string? findingType)
+    {
+        if (string.IsNullOrWhiteSpace(findingType))
+            return FileStatus.NotYetStarted.ToString();
+
+        var trimmedFindingType = findingType.Trim();
+        return NormalizeStatusValue(trimmedFindingType) == "obsolete"
+            ? FileStatus.NotYetStarted.ToString()
+            : trimmedFindingType;
+    }
+
+    public static FileStatus ResolveStatusFromStoredValue(string? statusValue)
+    {
+        if (string.IsNullOrWhiteSpace(statusValue))
+            return FileStatus.NotYetStarted;
+
+        if (Enum.TryParse<FileStatus>(statusValue, ignoreCase: true, out var parsedStatus))
+            return parsedStatus;
+
+        return NormalizeStatusValue(statusValue) switch
+        {
+            "notobsolete" => FileStatus.NotObsolete,
+            "totalpendingquarantined" => FileStatus.TotalPendingQuarantined,
+            _ => FileStatus.NotYetStarted
+        };
+    }
+
+    private bool IsInitialStatusAssignmentAllowed()
+        => _status == FileStatus.NotYetStarted
+           && string.Equals(StatusColumnValue, FileStatus.NotYetStarted.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeStatusValue(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
 
