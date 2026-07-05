@@ -33,15 +33,25 @@ public class RestoreService
 
     public async Task RestoreAsync(Guid id)
     {
-        _logger.LogInformation("[RESTORE START] FileId: {Id}", id);
+        _logger.LogInformation("[RESTORE_START] FileId:{FileId}", id);
 
         var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
 
         if (file == null)
         {
-            _logger.LogError("[RESTORE NOT FOUND] FileId: {Id} — no matching record.", id);
+            _logger.LogError("[RESTORE_NOT_FOUND] FileId:{FileId}, Message:No matching record found.", id);
             return;
         }
+
+        _logger.LogInformation(
+            "[RESTORE_RECORD_LOADED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Status:{Status}, FindingType:{FindingType}, CurrentFileLocation:{CurrentFileLocation}, OriginalFileLocation:{OriginalFileLocation}",
+            file.Id,
+            file.SourceRecordId,
+            file.FileName,
+            file.Status,
+            file.FindingType,
+            file.CurrentFileLocation,
+            file.OriginalFileLocation);
 
         if (file.Status == FileStatus.RestorationComplete)
         {
@@ -51,8 +61,11 @@ public class RestoreService
             _repository.Update(file);
 
             _logger.LogWarning(
-                "[RESTORE DUPLICATE] FileId: {Id} FileName: {File} — file is already restored.",
-                id, file.FileName);
+                "[RESTORE_DUPLICATE] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Status:{Status}",
+                id,
+                file.SourceRecordId,
+                file.FileName,
+                file.Status);
             return;
         }
 
@@ -60,8 +73,12 @@ public class RestoreService
             file.Status != FileStatus.PendingRestore)
         {
             _logger.LogWarning(
-                "[RESTORE SKIPPED] FileId: {Id} FileName: {File} — file is not in a restorable state (current: {Status}).",
-                id, file.FileName, file.Status);
+                "[RESTORE_SKIPPED_INVALID_STATUS] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, CurrentStatus:{Status}, ExpectedStatuses:{ExpectedStatuses}",
+                id,
+                file.SourceRecordId,
+                file.FileName,
+                file.Status,
+                "QuarantineComplete, PendingRestore");
             return;
         }
 
@@ -73,10 +90,24 @@ public class RestoreService
             ? string.Empty
             : _fileService.BuildStubPath(originalPath);
 
+        _logger.LogInformation(
+            "[RESTORE_PATHS_RESOLVED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, QuarantinePath:{QuarantinePath}, OriginalPath:{OriginalPath}, StubPath:{StubPath}",
+            file.Id,
+            file.SourceRecordId,
+            file.FileName,
+            quarantinePath,
+            originalPath,
+            stubPath);
+
         try
         {
             if (string.IsNullOrWhiteSpace(originalPath))
             {
+                _logger.LogError(
+                    "[RESTORE_VALIDATION_FAILED] FileId:{FileId}, FileName:{FileName}, Reason:Original restore path is missing.",
+                    file.Id,
+                    file.FileName);
+
                 MarkFailed(
                     file,
                     "Restore target path is missing.",
@@ -87,9 +118,20 @@ public class RestoreService
                 return;
             }
 
+            _logger.LogInformation(
+                "[RESTORE_QUARANTINE_EXISTS_CHECK_START] FileId:{FileId}, QuarantinePath:{QuarantinePath}",
+                file.Id,
+                quarantinePath);
+
             if (string.IsNullOrWhiteSpace(quarantinePath) ||
                 !await _fileService.ExistsAsync(quarantinePath))
             {
+                _logger.LogError(
+                    "[RESTORE_VALIDATION_FAILED] FileId:{FileId}, FileName:{FileName}, Reason:Quarantine file missing, QuarantinePath:{QuarantinePath}",
+                    file.Id,
+                    file.FileName,
+                    quarantinePath);
+
                 MarkFailed(
                     file,
                     $"Quarantine file not found: {quarantinePath}",
@@ -100,27 +142,87 @@ public class RestoreService
                 return;
             }
 
+            _logger.LogInformation(
+                "[RESTORE_QUARANTINE_EXISTS_CHECK_COMPLETE] FileId:{FileId}, QuarantinePath:{QuarantinePath}, Exists:true",
+                file.Id,
+                quarantinePath);
+
+            var previousStatus = file.Status;
             file.Status = FileStatus.InProgress;
             file.UpdatedDate = DateTime.UtcNow;
             file.ErrorCategory = ErrorCategory.None.ToString();
             file.ErrorReason = string.Empty;
             _repository.Update(file);
 
+            _logger.LogInformation(
+                "[RESTORE_STATUS_UPDATED] FileId:{FileId}, PreviousStatus:{PreviousStatus}, NewStatus:{NewStatus}",
+                file.Id,
+                previousStatus,
+                file.Status);
+
+            _logger.LogInformation(
+                "[RESTORE_COPY_START] FileId:{FileId}, QuarantinePath:{QuarantinePath}, OriginalPath:{OriginalPath}",
+                file.Id,
+                quarantinePath,
+                originalPath);
+
             await _fileService.CopyAsync(quarantinePath, originalPath);
+
+            _logger.LogInformation(
+                "[RESTORE_COPY_COMPLETE] FileId:{FileId}, QuarantinePath:{QuarantinePath}, OriginalPath:{OriginalPath}",
+                file.Id,
+                quarantinePath,
+                originalPath);
+
+            _logger.LogInformation(
+                "[RESTORE_QUARANTINE_DELETE_START] FileId:{FileId}, QuarantinePath:{QuarantinePath}",
+                file.Id,
+                quarantinePath);
+
             await _fileService.DeleteSourceAsync(quarantinePath);
 
             _logger.LogInformation(
-                "[RESTORE FILE] FileId: {Id} FileName: {File} — copied from {QuarantinePath} to {OriginalPath}.",
-                id, file.FileName, quarantinePath, originalPath);
+                "[RESTORE_QUARANTINE_DELETE_COMPLETE] FileId:{FileId}, QuarantinePath:{QuarantinePath}",
+                file.Id,
+                quarantinePath);
 
-            if (!string.IsNullOrWhiteSpace(stubPath) && await _fileService.ExistsAsync(stubPath))
+            if (!string.IsNullOrWhiteSpace(stubPath))
             {
-                await _fileService.DeleteSourceAsync(stubPath);
                 _logger.LogInformation(
-                    "[RESTORE STUB] FileId: {Id} FileName: {File} — retention placeholder removed at {StubPath}.",
-                    id, file.FileName, stubPath);
+                    "[RESTORE_STUB_EXISTS_CHECK_START] FileId:{FileId}, StubPath:{StubPath}",
+                    file.Id,
+                    stubPath);
+
+                if (await _fileService.ExistsAsync(stubPath))
+                {
+                    _logger.LogInformation(
+                        "[RESTORE_STUB_DELETE_START] FileId:{FileId}, StubPath:{StubPath}",
+                        file.Id,
+                        stubPath);
+
+                    await _fileService.DeleteSourceAsync(stubPath);
+
+                    _logger.LogInformation(
+                        "[RESTORE_STUB_DELETE_COMPLETE] FileId:{FileId}, StubPath:{StubPath}",
+                        file.Id,
+                        stubPath);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "[RESTORE_STUB_NOT_FOUND] FileId:{FileId}, StubPath:{StubPath}",
+                        file.Id,
+                        stubPath);
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[RESTORE_STUB_SKIPPED] FileId:{FileId}, Reason:Stub path is empty.",
+                    file.Id);
             }
 
+            previousStatus = file.Status;
             file.Status = FileStatus.RestorationComplete;
             file.RestoredDateUtc = DateTime.UtcNow;
             file.CurrentFileLocation = originalPath;
@@ -130,8 +232,20 @@ public class RestoreService
             _repository.Update(file);
 
             _logger.LogInformation(
-                "[RESTORE COMPLETE] FileId: {Id} FileName: {File} — restored to {OriginalPath}.",
-                id, file.FileName, originalPath);
+                "[RESTORE_STATUS_UPDATED] FileId:{FileId}, PreviousStatus:{PreviousStatus}, NewStatus:{NewStatus}, RestoredDateUtc:{RestoredDateUtc}",
+                file.Id,
+                previousStatus,
+                file.Status,
+                file.RestoredDateUtc);
+
+            _logger.LogInformation(
+                "[RESTORE_COMPLETE] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, RestoredToPath:{OriginalPath}, QuarantinePath:{QuarantinePath}, StubPath:{StubPath}",
+                id,
+                file.SourceRecordId,
+                file.FileName,
+                originalPath,
+                quarantinePath,
+                stubPath);
 
             _auditLogger.RecordEvent(
                 eventType: "FileRestored",
@@ -157,8 +271,15 @@ public class RestoreService
             _repository.Update(file);
 
             _logger.LogError(ex,
-                "[RESTORE FAILED] FileId: {Id} FileName: {File} — restore failed. Error: {Error}",
-                id, file.FileName, ex.Message);
+                "[RESTORE_FAILED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, ErrorCategory:{ErrorCategory}, Error:{Error}, QuarantinePath:{QuarantinePath}, OriginalPath:{OriginalPath}, StubPath:{StubPath}",
+                id,
+                file.SourceRecordId,
+                file.FileName,
+                category,
+                ex.Message,
+                quarantinePath,
+                originalPath,
+                stubPath);
 
             _auditLogger.RecordEvent(
                 eventType: "FileRestored",
@@ -171,7 +292,8 @@ public class RestoreService
                     Error = ex.Message,
                     ErrorCategory = category.ToString(),
                     QuarantinePath = quarantinePath,
-                    OriginalPath = originalPath
+                    OriginalPath = originalPath,
+                    StubPath = stubPath
                 });
         }
     }
@@ -183,31 +305,64 @@ public class RestoreService
                         x.Status == FileStatus.PendingRestore)
             .ToList();
 
-        _logger.LogInformation("[RESTORE ALL START] Found {Count} file(s) eligible for restore.", files.Count);
+        _logger.LogInformation("[RESTORE_ALL_START] EligibleCount:{EligibleCount}", files.Count);
 
         var succeeded = 0;
         var failed = 0;
 
         foreach (var file in files)
         {
+            _logger.LogInformation(
+                "[RESTORE_ALL_ITEM_START] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Status:{Status}",
+                file.Id,
+                file.SourceRecordId,
+                file.FileName,
+                file.Status);
+
             await RestoreAsync(file.Id);
 
             var updated = _repository.GetById(file.Id);
             if (updated?.Status == FileStatus.RestorationComplete)
+            {
                 succeeded++;
+                _logger.LogInformation(
+                    "[RESTORE_ALL_ITEM_COMPLETE] FileId:{FileId}, FinalStatus:{FinalStatus}",
+                    file.Id,
+                    updated.Status);
+            }
             else if (updated?.Status == FileStatus.Error)
+            {
                 failed++;
+                _logger.LogWarning(
+                    "[RESTORE_ALL_ITEM_FAILED] FileId:{FileId}, FinalStatus:{FinalStatus}, ErrorCategory:{ErrorCategory}, ErrorReason:{ErrorReason}",
+                    file.Id,
+                    updated.Status,
+                    updated.ErrorCategory,
+                    updated.ErrorReason);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[RESTORE_ALL_ITEM_SKIPPED_OR_UNCHANGED] FileId:{FileId}, FinalStatus:{FinalStatus}",
+                    file.Id,
+                    updated?.Status.ToString() ?? "RecordNotFound");
+            }
         }
 
         if (succeeded > 0 && failed > 0)
         {
             _logger.LogWarning(
-                "[RESTORE ALL PARTIAL FAILURE] Succeeded: {Succeeded}, Failed: {Failed}, ErrorCategory: {ErrorCategory}",
-                succeeded, failed, ErrorCategoryResolver.PartialRestoreFailure());
+                "[RESTORE_ALL_PARTIAL_FAILURE] Succeeded:{Succeeded}, Failed:{Failed}, ErrorCategory:{ErrorCategory}",
+                succeeded,
+                failed,
+                ErrorCategoryResolver.PartialRestoreFailure());
         }
 
-        _logger.LogInformation("[RESTORE ALL COMPLETE] Processed {Count} file(s). Succeeded: {Succeeded}, Failed: {Failed}",
-            files.Count, succeeded, failed);
+        _logger.LogInformation(
+            "[RESTORE_ALL_COMPLETE] Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}",
+            files.Count,
+            succeeded,
+            failed);
     }
 
     private string? ResolveQuarantinePath(FileFinding file)
@@ -235,8 +390,12 @@ public class RestoreService
         _repository.Update(file);
 
         _logger.LogError(
-            "[RESTORE FAILED] FileId: {Id} FileName: {File} — {ErrorReason}",
-            id, file.FileName, errorReason);
+            "[RESTORE_FAILED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, ErrorCategory:{ErrorCategory}, ErrorReason:{ErrorReason}",
+            id,
+            file.SourceRecordId,
+            file.FileName,
+            errorCategory,
+            errorReason);
 
         _auditLogger.RecordEvent(
             eventType: "FileRestored",
