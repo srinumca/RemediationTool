@@ -1,7 +1,11 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
+using RemediationTool.Application.Options;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Infrastructure.Strategies;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
@@ -10,13 +14,26 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
     private readonly string _filePath;
     private readonly object _lock = new();
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly IIngestionJobAuditRepository _jobAuditRepository;
+    private readonly IIngestionWorkingFileStrategy _workingFileStrategy;
+    private readonly IngestionProcessingOptions _processingOptions;
+    private readonly ILogger<JsonIngestionStagingRepository> _logger;
 
-    public JsonIngestionStagingRepository()
+    public JsonIngestionStagingRepository(
+        IStorageService storage,
+        IIngestionJobAuditRepository jobAuditRepository,
+        IOptions<IngestionProcessingOptions> processingOptions,
+        ILogger<JsonIngestionStagingRepository> logger,
+        ILogger<ParquetIngestionWorkingFileStrategy> parquetLogger)
     {
         var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
 
         _filePath = Path.Combine(dataDirectory, "ingestion-staged-findings.json");
+        _jobAuditRepository = jobAuditRepository;
+        _processingOptions = processingOptions.Value;
+        _logger = logger;
+        _workingFileStrategy = new ParquetIngestionWorkingFileStrategy(storage, processingOptions, parquetLogger);
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -36,10 +53,7 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         lock (_lock)
         {
             var stagedFindings = LoadAll();
-
-            // Replace any existing staged records for this jobId (idempotent on re-upload)
-            stagedFindings.RemoveAll(existing =>
-                string.Equals(existing.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+            stagedFindings.RemoveAll(existing => string.Equals(existing.JobId, jobId, StringComparison.OrdinalIgnoreCase));
 
             var newRecords = validFindings
                 .Select((finding, index) => new IngestionStagedFinding
@@ -54,12 +68,22 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
             stagedFindings.AddRange(newRecords);
             SaveAll(stagedFindings);
         }
+
+        WriteParquetWorkingFile(jobId, validFindings);
     }
 
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return new List<FileFinding>();
+
+        var parquetRecords = TryReadFromParquet(jobId, lastProcessedRecordCount);
+        if (parquetRecords != null)
+            return parquetRecords;
+
+        _logger.LogInformation(
+            "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
+            jobId, lastProcessedRecordCount);
 
         lock (_lock)
         {
@@ -80,16 +104,17 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
 
         lock (_lock)
         {
-            return LoadAll()
-                .Count(record =>
-                    string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+            var stagingCount = LoadAll()
+                .Count(record => string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+
+            if (stagingCount > 0 || !_processingOptions.EnableParquetWorkingFile)
+                return stagingCount;
         }
+
+        var audit = _jobAuditRepository.GetByJobId(jobId);
+        return IsParquetAvailable(audit) ? audit!.WorkingFileRecordCount : 0;
     }
 
-    /// <summary>
-    /// Removes all staged records for the given JobId.
-    /// Called after successful job completion to prevent unbounded file growth.
-    /// </summary>
     public void DeleteByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId))
@@ -106,13 +131,72 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
+    private void WriteParquetWorkingFile(string jobId, List<FileFinding> validFindings)
+    {
+        if (!_processingOptions.EnableParquetWorkingFile) return;
+
+        var audit = _jobAuditRepository.GetByJobId(jobId);
+        if (audit == null)
+        {
+            _logger.LogWarning("[PARQUET_WRITE_SKIPPED] JobId:{JobId}, Reason:Job audit not found.", jobId);
+            return;
+        }
+
+        var result = _workingFileStrategy
+            .WriteAsync(jobId, audit.InboundFileName, validFindings)
+            .GetAwaiter()
+            .GetResult();
+
+        audit.WorkingFileFormat = result.Format;
+        audit.WorkingFilePath = result.Path;
+        audit.WorkingFileRecordCount = result.RecordCount;
+        _jobAuditRepository.Update(audit);
+
+        _logger.LogInformation(
+            "[PARQUET_STAGING_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}",
+            jobId, result.Path, result.RecordCount);
+    }
+
+    private List<FileFinding>? TryReadFromParquet(string jobId, int lastProcessedRecordCount)
+    {
+        if (!_processingOptions.EnableParquetWorkingFile) return null;
+
+        var audit = _jobAuditRepository.GetByJobId(jobId);
+        if (!IsParquetAvailable(audit)) return null;
+
+        try
+        {
+            _logger.LogInformation(
+                "[PARQUET_RESUME_READ_ATTEMPT] JobId:{JobId}, Path:{Path}, LastProcessedRecordCount:{LastProcessedRecordCount}",
+                jobId, audit!.WorkingFilePath, lastProcessedRecordCount);
+
+            var records = _workingFileStrategy
+                .ReadAfterAsync(audit.WorkingFilePath!, lastProcessedRecordCount)
+                .GetAwaiter()
+                .GetResult();
+
+            if (records.Count > 0 || lastProcessedRecordCount >= audit.WorkingFileRecordCount)
+            {
+                _logger.LogInformation("[PARQUET_RESUME_READ_SUCCESS] JobId:{JobId}, Records:{Records}", jobId, records.Count);
+                return records;
+            }
+
+            _logger.LogWarning("[PARQUET_RESUME_EMPTY_FALLBACK] JobId:{JobId}, Path:{Path}", jobId, audit.WorkingFilePath);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[PARQUET_RESUME_READ_FAILED] JobId:{JobId}. Falling back to staging.", jobId);
+            return null;
+        }
+    }
+
     private List<IngestionStagedFinding> LoadAll()
     {
         if (!File.Exists(_filePath))
             return new List<IngestionStagedFinding>();
 
         var json = File.ReadAllText(_filePath);
-
         if (string.IsNullOrWhiteSpace(json))
             return new List<IngestionStagedFinding>();
 
@@ -125,4 +209,10 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         var json = JsonSerializer.Serialize(stagedFindings, _jsonOptions);
         File.WriteAllText(_filePath, json);
     }
+
+    private static bool IsParquetAvailable(IngestionJobAudit? audit)
+        => audit != null
+           && string.Equals(audit.WorkingFileFormat, "Parquet", StringComparison.OrdinalIgnoreCase)
+           && !string.IsNullOrWhiteSpace(audit.WorkingFilePath)
+           && audit.WorkingFileRecordCount > 0;
 }
