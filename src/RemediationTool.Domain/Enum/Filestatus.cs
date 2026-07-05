@@ -1,4 +1,4 @@
-﻿namespace RemediationTool.Domain;
+namespace RemediationTool.Domain;
 
 /// <summary>
 /// Represents the current processing stage of a file record
@@ -35,6 +35,15 @@ public enum FileStatus
 
     /// <summary>File permanently deleted. Irreversible.</summary>
     DeletionComplete = 8,
+
+    // ── Initial ingestion values that can mirror FindingType exactly in storage ─
+    // These are kept separate from lifecycle-complete statuses because the inbound
+    // file may already contain non-obsolete records whose initial Status column
+    // must match FindingType before any tool lifecycle action runs.
+    Restoration = 20,
+    Exclusion = 21,
+    TotalPendingQuarantined = 22,
+    NotObsolete = 23,
 
     // ── Legacy values — kept for backward compatibility ────────────────────────
     Loaded = 100,

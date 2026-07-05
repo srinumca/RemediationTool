@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
+using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
 
 namespace RemediationTool.API.Controllers;
@@ -17,15 +17,51 @@ public class QuarantineController : ControllerBase
         _logger = logger;
     }
 
-    [HttpPost("run")]
-    public async Task<IActionResult> Run()
+    /// <summary>
+    /// Queues selected NotYetStarted obsolete records for quarantine.
+    /// If ProcessImmediately=true, the queued records are processed in the same request.
+    /// </summary>
+    [HttpPost("queue")]
+    [ProducesResponseType(typeof(QuarantineBatchResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Queue([FromBody] QuarantineRequest request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("[QUARANTINE REQUEST] — quarantine run triggered.");
+        if (request == null)
+            return BadRequest("Quarantine request is required.");
 
-        await _service.ProcessAsync();
+        if (!request.IncludeAllEligibleNotYetStarted && request.RecordIds.Count == 0)
+            return BadRequest("At least one RecordId is required unless IncludeAllEligibleNotYetStarted is true.");
 
-        _logger.LogInformation("[QUARANTINE RESPONSE] — quarantine run completed.");
-        return Ok("Quarantine completed");
+        _logger.LogInformation(
+            "[QUARANTINE_QUEUE_REQUEST] RequestedBy:{RequestedBy}, RecordIds:{RecordIdsCount}, IncludeAllEligible:{IncludeAllEligible}, ProcessImmediately:{ProcessImmediately}",
+            request.RequestedBy, request.RecordIds.Count, request.IncludeAllEligibleNotYetStarted, request.ProcessImmediately);
+
+        var response = await _service.QueueAsync(request, cancellationToken);
+
+        _logger.LogInformation(
+            "[QUARANTINE_QUEUE_RESPONSE] RunId:{RunId}, Queued:{Queued}, Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}, Skipped:{Skipped}",
+            response.RunId, response.QueuedCount, response.ProcessedCount, response.SucceededCount, response.FailedCount, response.SkippedCount);
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Processes all records currently in PendingQuarantine.
+    /// Intended for background job / Step Function execution.
+    /// </summary>
+    [HttpPost("run")]
+    [ProducesResponseType(typeof(QuarantineBatchResult), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Run(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("[QUARANTINE_RUN_REQUEST] Processing all PendingQuarantine records.");
+
+        var response = await _service.ProcessAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "[QUARANTINE_RUN_RESPONSE] RunId:{RunId}, Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}, Skipped:{Skipped}",
+            response.RunId, response.ProcessedCount, response.SucceededCount, response.FailedCount, response.SkippedCount);
+
+        return Ok(response);
         // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }

@@ -1,6 +1,7 @@
-﻿using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2;
 using Amazon.S3;
 using FluentValidation;
+using Microsoft.AspNetCore.Http.Features;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Logging;
 using RemediationTool.Application.Options;
@@ -9,6 +10,7 @@ using RemediationTool.Application.Services;
 using RemediationTool.Application.Validators;
 using RemediationTool.Infrastructure;
 using RemediationTool.Infrastructure.DynamoDB;
+using RemediationTool.Infrastructure.FileServices;
 using RemediationTool.Infrastructure.Logging;
 using RemediationTool.Infrastructure.Repositories;
 using RemediationTool.Infrastructure.Strategies;
@@ -26,6 +28,26 @@ try
     Log.Information("GFR Remediation Tool starting up...");
 
     var builder = WebApplication.CreateBuilder(args);
+
+    var ingestionProcessingOptions = builder.Configuration
+        .GetSection(IngestionProcessingOptions.SectionName)
+        .Get<IngestionProcessingOptions>() ?? new IngestionProcessingOptions();
+
+    var maxUploadRequestBodySizeBytes = ingestionProcessingOptions.MaxUploadFileSizeBytes;
+
+    // ─── Request size limits ──────────────────────────────────────────────────
+    // ASP.NET Core rejects multipart/form-data uploads over the default limit
+    // before the controller is reached. Keep Kestrel and multipart form limits
+    // aligned with ingestion validation.
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.Limits.MaxRequestBodySize = maxUploadRequestBodySizeBytes;
+    });
+
+    builder.Services.Configure<FormOptions>(options =>
+    {
+        options.MultipartBodyLengthLimit = maxUploadRequestBodySizeBytes;
+    });
 
     // ─── Serilog — read config from appsettings.json ─────────────────────────
     // Replaces the default ASP.NET Core logging with Serilog.
@@ -57,6 +79,8 @@ try
     // ─── Options ─────────────────────────────────────────────────────────────
     builder.Services.Configure<IngestionProcessingOptions>(
         builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
+    builder.Services.Configure<QuarantineProcessingOptions>(
+        builder.Configuration.GetSection(QuarantineProcessingOptions.SectionName));
 
     // ─── Storage ─────────────────────────────────────────────────────────────
     var storageType = builder.Configuration["Storage:Type"] ?? "Local";
@@ -107,6 +131,7 @@ try
     builder.Services.AddScoped<RestoreService>();
     builder.Services.AddScoped<DeleteService>();
     builder.Services.AddScoped<ReportService>();
+    builder.Services.AddSingleton<IQuarantineFileService, LocalQuarantineFileService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     // ─── CORS (for dashboard) ─────────────────────────────────────────────────
