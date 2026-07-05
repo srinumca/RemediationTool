@@ -84,15 +84,18 @@ try
 
     // ─── Storage ─────────────────────────────────────────────────────────────
     var storageType = builder.Configuration["Storage:Type"] ?? "Local";
+    var useS3Storage = storageType.Equals("S3", StringComparison.OrdinalIgnoreCase);
 
-    if (storageType.Equals("S3", StringComparison.OrdinalIgnoreCase))
+    if (useS3Storage)
     {
         builder.Services.AddRemediationAwsServices(builder.Configuration);
         builder.Services.AddSingleton<IStorageService, S3StorageService>();
+        builder.Services.AddSingleton<IQuarantineFileService, StorageQuarantineFileService>();
     }
     else
     {
         builder.Services.AddSingleton<IStorageService, LocalStorageService>();
+        builder.Services.AddSingleton<IQuarantineFileService, LocalQuarantineFileService>();
     }
 
     // ─── Persistence ─────────────────────────────────────────────────────────
@@ -131,7 +134,6 @@ try
     builder.Services.AddScoped<RestoreService>();
     builder.Services.AddScoped<DeleteService>();
     builder.Services.AddScoped<ReportService>();
-    builder.Services.AddSingleton<IQuarantineFileService, LocalQuarantineFileService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     // ─── CORS (for dashboard) ─────────────────────────────────────────────────
