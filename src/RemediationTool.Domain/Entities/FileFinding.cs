@@ -179,7 +179,7 @@ public class FileFinding
         if (string.IsNullOrWhiteSpace(statusValue))
             return FileStatus.NotYetStarted;
 
-        if (Enum.TryParse<FileStatus>(statusValue, ignoreCase: true, out var parsedStatus))
+        if (System.Enum.TryParse<FileStatus>(statusValue, ignoreCase: true, out var parsedStatus))
             return parsedStatus;
 
         return NormalizeStatusValue(statusValue) switch
