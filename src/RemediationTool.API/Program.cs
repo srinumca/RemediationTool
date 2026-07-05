@@ -1,4 +1,4 @@
-﻿using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2;
 using Amazon.S3;
 using FluentValidation;
 using RemediationTool.Application.Interfaces;
@@ -9,6 +9,7 @@ using RemediationTool.Application.Services;
 using RemediationTool.Application.Validators;
 using RemediationTool.Infrastructure;
 using RemediationTool.Infrastructure.DynamoDB;
+using RemediationTool.Infrastructure.FileServices;
 using RemediationTool.Infrastructure.Logging;
 using RemediationTool.Infrastructure.Repositories;
 using RemediationTool.Infrastructure.Strategies;
@@ -57,6 +58,8 @@ try
     // ─── Options ─────────────────────────────────────────────────────────────
     builder.Services.Configure<IngestionProcessingOptions>(
         builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
+    builder.Services.Configure<QuarantineProcessingOptions>(
+        builder.Configuration.GetSection(QuarantineProcessingOptions.SectionName));
 
     // ─── Storage ─────────────────────────────────────────────────────────────
     var storageType = builder.Configuration["Storage:Type"] ?? "Local";
@@ -107,6 +110,7 @@ try
     builder.Services.AddScoped<RestoreService>();
     builder.Services.AddScoped<DeleteService>();
     builder.Services.AddScoped<ReportService>();
+    builder.Services.AddSingleton<IQuarantineFileService, LocalQuarantineFileService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     // ─── CORS (for dashboard) ─────────────────────────────────────────────────
