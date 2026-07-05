@@ -82,7 +82,11 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
         if (parquetStream.CanSeek)
             parquetStream.Position = 0;
 
-        var rows = await ParquetSerializer.DeserializeAsync<ParquetFindingRow>(parquetStream, cancellationToken: cancellationToken);
+        var deserializationResult = await ParquetSerializer.DeserializeAsync<ParquetFindingRow>(
+            parquetStream,
+            cancellationToken: cancellationToken);
+
+        var rows = ExtractRows(deserializationResult);
         var remainingRows = rows.Skip(lastProcessedRecordCount).ToList();
         var findings = remainingRows.Select(ToFileFinding).ToList();
 
@@ -91,6 +95,32 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             workingFilePath, rows.Count, findings.Count);
 
         return findings;
+    }
+
+    private static List<ParquetFindingRow> ExtractRows(object? deserializationResult)
+    {
+        if (deserializationResult == null)
+            return new List<ParquetFindingRow>();
+
+        if (deserializationResult is IEnumerable<ParquetFindingRow> directRows)
+            return directRows.ToList();
+
+        var propertyNames = new[] { "Data", "Rows", "Items", "Values", "Records" };
+        var resultType = deserializationResult.GetType();
+
+        foreach (var propertyName in propertyNames)
+        {
+            var property = resultType.GetProperty(propertyName);
+            if (property == null)
+                continue;
+
+            var value = property.GetValue(deserializationResult);
+            if (value is IEnumerable<ParquetFindingRow> rows)
+                return rows.ToList();
+        }
+
+        throw new InvalidOperationException(
+            $"Unable to read Parquet rows from deserialization result type {resultType.FullName}.");
     }
 
     private static ParquetFindingRow ToParquetRow(FileFinding finding)
