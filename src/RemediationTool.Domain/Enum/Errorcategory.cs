@@ -44,6 +44,12 @@ public enum ErrorCategory
     /// </summary>
     ReadOnlyOrSystemProtected,
 
+    /// <summary>
+    /// File is locked, checked out, or open by another process/user.
+    /// Actionable: true — retry after lock is released or use admin intervention.
+    /// </summary>
+    FileLockedOrCheckedOut,
+
     // ---------------------------------------------------------------
     // Connectivity errors
     // ---------------------------------------------------------------
@@ -146,6 +152,40 @@ public enum ErrorCategory
     /// Actionable: false — priority: Low.
     /// </summary>
     RestorationDuplicateRestoreAttempt,
+
+    /// <summary>
+    /// Restore target already contains a file/object that may conflict with the restore.
+    /// Actionable: true — requires manual confirmation or conflict policy.
+    /// </summary>
+    RestorationTargetConflict,
+
+    // ---------------------------------------------------------------
+    // Deletion-specific errors
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// File is not old enough to be deleted based on retention policy.
+    /// Actionable: false until retention period is met.
+    /// </summary>
+    DeletionRetentionNotMet,
+
+    /// <summary>
+    /// Quarantined file was missing when deletion was attempted.
+    /// Actionable: true — requires investigation of quarantine store.
+    /// </summary>
+    DeletionQuarantineFileMissing,
+
+    /// <summary>
+    /// A subset of files failed during a bulk delete operation.
+    /// Actionable: true — requires manual investigation.
+    /// </summary>
+    DeletionPartialFailure,
+
+    /// <summary>
+    /// Delete action was attempted more than once after deletion had already completed.
+    /// Actionable: false.
+    /// </summary>
+    DeletionDuplicateAttempt,
 
     // ---------------------------------------------------------------
     // Catch-all
