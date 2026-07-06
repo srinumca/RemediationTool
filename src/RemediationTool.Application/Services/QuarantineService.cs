@@ -150,10 +150,7 @@ public class QuarantineService
             "[QUARANTINE_RUN_START] RunId:{RunId}, RequestedBy:{RequestedBy}, FilteredRecordCount:{FilteredRecordCount}, RetentionYears:{RetentionYears}, MaxRetryAttempts:{MaxRetryAttempts}",
             result.RunId, requestedBy, recordIds?.Count ?? 0, _options.RetentionYears, _options.MaxRetryAttempts);
 
-        var files = _repository.GetAll()
-            .Where(x => x.Status == FileStatus.PendingQuarantine)
-            .Where(x => recordIds == null || recordIds.Contains(x.Id))
-            .ToList();
+        var files = GetPendingQuarantineRecords(recordIds);
 
         result.RequestedCount = recordIds?.Count ?? files.Count;
         result.ProcessedCount = files.Count;
@@ -404,16 +401,38 @@ public class QuarantineService
 
     private IReadOnlyList<FileFinding> GetQueueCandidates(bool includeAllEligible, IReadOnlyCollection<Guid> requestedIds)
     {
-        var records = _repository.GetAll();
-
         if (includeAllEligible)
-            return records.Where(IsEligibleForQuarantineQueue).ToList();
+        {
+            var obsoleteRecords = _repository.GetLatestByFindingType(FindingType.Obsolete);
+            return obsoleteRecords.Where(IsEligibleForQuarantineQueue).ToList();
+        }
 
         if (requestedIds.Count == 0)
             return Array.Empty<FileFinding>();
 
-        var requestedSet = requestedIds.ToHashSet();
-        return records.Where(x => requestedSet.Contains(x.Id)).ToList();
+        return requestedIds
+            .Distinct()
+            .Select(id => _repository.GetById(id))
+            .Where(file => file != null)
+            .Cast<FileFinding>()
+            .ToList();
+    }
+
+    private IReadOnlyList<FileFinding> GetPendingQuarantineRecords(IReadOnlyCollection<Guid>? recordIds)
+    {
+        if (recordIds is { Count: > 0 })
+        {
+            return recordIds
+                .Distinct()
+                .Select(id => _repository.GetById(id))
+                .Where(file => file != null && file.Status == FileStatus.PendingQuarantine)
+                .Cast<FileFinding>()
+                .ToList();
+        }
+
+        return _repository.GetAll()
+            .Where(x => x.Status == FileStatus.PendingQuarantine)
+            .ToList();
     }
 
     private static bool IsEligibleForQuarantineQueue(FileFinding file)
