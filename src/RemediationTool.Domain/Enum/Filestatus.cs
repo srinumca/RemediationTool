@@ -36,6 +36,9 @@ public enum FileStatus
     /// <summary>File permanently deleted. Irreversible.</summary>
     DeletionComplete = 8,
 
+    /// <summary>File deletion is currently in progress.</summary>
+    DeletionInProgress = 9,
+
     // ── Initial ingestion values that can mirror FindingType exactly in storage ─
     // These are kept separate from lifecycle-complete statuses because the inbound
     // file may already contain non-obsolete records whose initial Status column
