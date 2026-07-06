@@ -24,6 +24,7 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     private readonly string _tableName;
     private readonly ILogger<DynamoDbFileFindingRepository> _logger;
     private const int BatchLimit = 25;
+    private const int MaxUnprocessedItemRetryAttempts = 5;
 
     public DynamoDbFileFindingRepository(
         IAmazonDynamoDB dynamoDb,
@@ -50,34 +51,20 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     {
         if (findings == null || findings.Count == 0) return;
 
+        var chunkNumber = 0;
         foreach (var chunk in findings.Chunk(BatchLimit))
         {
+            chunkNumber++;
             var requests = chunk.Select(f => new WriteRequest
             {
                 PutRequest = new PutRequest { Item = DynamoDbAttributeMap.ToMap(f) }
             }).ToList();
 
-            var remaining = new BatchWriteItemRequest
-            {
-                RequestItems = new Dictionary<string, List<WriteRequest>>
-                { [_tableName] = requests }
-            };
-
-            var attempts = 0;
-            while (true)
-            {
-                var resp = _dynamoDb.BatchWriteItemAsync(remaining).GetAwaiter().GetResult();
-                if (!resp.UnprocessedItems.Any()) break;
-                if (++attempts >= 5)
-                {
-                    _logger.LogWarning(
-                        "Giving up on {Count} unprocessed items after 5 retries.",
-                        resp.UnprocessedItems.Values.Sum(l => l.Count));
-                    break;
-                }
-                Thread.Sleep(TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempts)));
-                remaining = new BatchWriteItemRequest { RequestItems = resp.UnprocessedItems };
-            }
+            ExecuteBatchWriteWithRetry(
+                requests,
+                operationName: "FindingsBatchWrite",
+                chunkNumber: chunkNumber,
+                totalInputCount: findings.Count);
         }
     }
 
@@ -219,6 +206,71 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     }
 
     // ── Private helper ────────────────────────────────────────────────────────
+
+    private void ExecuteBatchWriteWithRetry(
+        List<WriteRequest> writeRequests,
+        string operationName,
+        int chunkNumber,
+        int totalInputCount)
+    {
+        var remaining = new BatchWriteItemRequest
+        {
+            RequestItems = new Dictionary<string, List<WriteRequest>>
+            {
+                [_tableName] = writeRequests
+            }
+        };
+
+        var retryAttempt = 0;
+
+        while (true)
+        {
+            var response = _dynamoDb.BatchWriteItemAsync(remaining).GetAwaiter().GetResult();
+
+            if (response.UnprocessedItems == null || !response.UnprocessedItems.Any())
+            {
+                _logger.LogInformation(
+                    "[DYNAMODB_BATCH_WRITE_COMPLETE] Operation:{Operation}, Table:{Table}, ChunkNumber:{ChunkNumber}, ChunkSize:{ChunkSize}, TotalInputCount:{TotalInputCount}, RetryAttempts:{RetryAttempts}",
+                    operationName,
+                    _tableName,
+                    chunkNumber,
+                    writeRequests.Count,
+                    totalInputCount,
+                    retryAttempt);
+                return;
+            }
+
+            var unprocessedCount = response.UnprocessedItems.Values.Sum(items => items.Count);
+            retryAttempt++;
+
+            if (retryAttempt >= MaxUnprocessedItemRetryAttempts)
+            {
+                _logger.LogError(
+                    "[DYNAMODB_BATCH_WRITE_UNPROCESSED_EXHAUSTED] Operation:{Operation}, Table:{Table}, ChunkNumber:{ChunkNumber}, UnprocessedCount:{UnprocessedCount}, RetryAttempts:{RetryAttempts}",
+                    operationName,
+                    _tableName,
+                    chunkNumber,
+                    unprocessedCount,
+                    retryAttempt);
+
+                throw new InvalidOperationException(
+                    $"{operationName} failed for table {_tableName}. {unprocessedCount} item(s) remained unprocessed after {retryAttempt} retry attempt(s).");
+            }
+
+            var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, retryAttempt));
+            _logger.LogWarning(
+                "[DYNAMODB_BATCH_WRITE_UNPROCESSED_RETRY] Operation:{Operation}, Table:{Table}, ChunkNumber:{ChunkNumber}, UnprocessedCount:{UnprocessedCount}, RetryAttempt:{RetryAttempt}, DelayMs:{DelayMs}",
+                operationName,
+                _tableName,
+                chunkNumber,
+                unprocessedCount,
+                retryAttempt,
+                delay.TotalMilliseconds);
+
+            Thread.Sleep(delay);
+            remaining = new BatchWriteItemRequest { RequestItems = response.UnprocessedItems };
+        }
+    }
 
     private IReadOnlyList<FileFinding> QueryGsi(
         string indexName, string exprAttrName, string attrName,
