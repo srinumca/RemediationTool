@@ -1,9 +1,11 @@
-﻿using RemediationTool.Domain.Enum;
+using RemediationTool.Domain.Enum;
 
 namespace RemediationTool.Domain.Entities;
 
 public class IngestionCheckpoint
 {
+    private bool _isResumeEligible;
+
     public string JobId { get; set; } = string.Empty;
 
     public string InboundFileName { get; set; } = string.Empty;
@@ -34,7 +36,24 @@ public class IngestionCheckpoint
 
     public IngestionJobStatus Status { get; set; } = IngestionJobStatus.Started;
 
-    public bool IsResumeEligible { get; set; }
+    /// <summary>
+    /// Resume is allowed only for failed jobs where there are still valid records
+    /// remaining to persist. This supports the existing multi-batch resume flow and
+    /// also allows single-batch retry when batch 1 fails before it can be marked
+    /// successful.
+    /// </summary>
+    public bool IsResumeEligible
+    {
+        get
+        {
+            if (Status != IngestionJobStatus.Failed)
+                return false;
+
+            return (SuccessCount > 0 && LastProcessedRecordCount < SuccessCount)
+                   || _isResumeEligible;
+        }
+        set => _isResumeEligible = value;
+    }
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
