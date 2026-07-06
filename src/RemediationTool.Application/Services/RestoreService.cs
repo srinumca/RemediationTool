@@ -147,6 +147,17 @@ public class RestoreService
                 file.Id,
                 quarantinePath);
 
+            if (await _fileService.ExistsAsync(originalPath))
+            {
+                _logger.LogWarning(
+                    "[RESTORE_TARGET_ALREADY_EXISTS] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, TargetPath:{TargetPath}, ErrorCategory:{ErrorCategory}",
+                    file.Id,
+                    file.SourceRecordId,
+                    file.FileName,
+                    originalPath,
+                    ErrorCategoryResolver.RestoreTargetConflict());
+            }
+
             var previousStatus = file.Status;
             file.Status = FileStatus.InProgress;
             file.UpdatedDate = DateTime.UtcNow;
@@ -255,9 +266,18 @@ public class RestoreService
                 details: new
                 {
                     file.FileName,
+                    file.SourceRecordId,
                     RestoredToPath = originalPath,
                     QuarantinePath = quarantinePath,
-                    StubPath = stubPath
+                    StubPath = stubPath,
+                    file.FileOwner,
+                    file.SiteOwner,
+                    file.LastModifiedDateUtc,
+                    file.CreatedDateUtc,
+                    file.LastAccessedDateUtc,
+                    file.PolicyName,
+                    file.PolicyId,
+                    file.SensitivityLabel
                 });
         }
         catch (Exception ex)
@@ -289,11 +309,17 @@ public class RestoreService
                 details: new
                 {
                     file.FileName,
+                    file.SourceRecordId,
                     Error = ex.Message,
                     ErrorCategory = category.ToString(),
                     QuarantinePath = quarantinePath,
                     OriginalPath = originalPath,
-                    StubPath = stubPath
+                    StubPath = stubPath,
+                    file.FileOwner,
+                    file.SiteOwner,
+                    file.LastModifiedDateUtc,
+                    file.CreatedDateUtc,
+                    file.LastAccessedDateUtc
                 });
         }
     }

@@ -28,7 +28,10 @@ public static class ErrorCategoryResolver
         UnauthorizedAccessException
             => ErrorCategory.PermissionDenied,
 
-        // File is read-only or system-protected
+        // File is read-only, locked, checked out, or system-protected
+        IOException ioe when IsLockedOrCheckedOut(ioe)
+            => ErrorCategory.FileLockedOrCheckedOut,
+
         IOException ioe when IsReadOnlyOrProtected(ioe)
             => ErrorCategory.ReadOnlyOrSystemProtected,
 
@@ -55,6 +58,10 @@ public static class ErrorCategoryResolver
         // System temporarily unavailable during restore
         InvalidOperationException ioe when IsSystemUnavailable(ioe)
             => ErrorCategory.RestorationSystemUnavailable,
+
+        // Restore/delete target conflict
+        InvalidOperationException ioe when IsConflict(ioe)
+            => ErrorCategory.RestorationTargetConflict,
 
         // Invalid file/row shape or unsupported upload content
         InvalidDataException
@@ -147,7 +154,32 @@ public static class ErrorCategoryResolver
     public static ErrorCategory PartialRestoreFailure()
         => ErrorCategory.RestorationPartialRestoreFailure;
 
+    public static ErrorCategory RestoreTargetConflict()
+        => ErrorCategory.RestorationTargetConflict;
+
+    public static ErrorCategory RetentionNotMet()
+        => ErrorCategory.DeletionRetentionNotMet;
+
+    public static ErrorCategory DeleteQuarantineFileMissing()
+        => ErrorCategory.DeletionQuarantineFileMissing;
+
+    public static ErrorCategory DuplicateDeleteAttempt()
+        => ErrorCategory.DeletionDuplicateAttempt;
+
+    public static ErrorCategory PartialDeleteFailure()
+        => ErrorCategory.DeletionPartialFailure;
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    private static bool IsLockedOrCheckedOut(IOException ex)
+    {
+        var msg = ex.Message.ToLowerInvariant();
+        return msg.Contains("sharing violation")
+            || msg.Contains("locked")
+            || msg.Contains("checked out")
+            || msg.Contains("in use")
+            || msg.Contains("being used by another process");
+    }
 
     private static bool IsReadOnlyOrProtected(IOException ex)
     {
@@ -155,8 +187,7 @@ public static class ErrorCategoryResolver
         return msg.Contains("read-only")
             || msg.Contains("readonly")
             || msg.Contains("write protected")
-            || msg.Contains("access is denied")
-            || msg.Contains("sharing violation");
+            || msg.Contains("access is denied");
     }
 
     private static bool IsConnectivityFailure(IOException ex)
@@ -189,5 +220,13 @@ public static class ErrorCategoryResolver
         return msg.Contains("unavailable")
             || msg.Contains("not available")
             || msg.Contains("service unavailable");
+    }
+
+    private static bool IsConflict(InvalidOperationException ex)
+    {
+        var msg = ex.Message.ToLowerInvariant();
+        return msg.Contains("conflict")
+            || msg.Contains("already exists")
+            || msg.Contains("duplicate target");
     }
 }
