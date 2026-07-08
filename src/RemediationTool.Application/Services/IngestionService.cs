@@ -155,10 +155,10 @@ public class IngestionService : IIngestionService
                 _ => throw new InvalidDataException("Unsupported file format. Only .csv and .xlsx files are allowed.")
             };
 
-            response.TotalRecords = findings.Count;
-            response.PayloadRecordCount = findings.Count;
-            response.RejectCount = findings.Count(x => !x.IsValid);
             response.SuccessCount = findings.Count(x => x.IsValid);
+            response.RejectCount = CountRejectedRecords(findings, response.RejectedRows);
+            response.TotalRecords = response.SuccessCount + response.RejectCount;
+            response.PayloadRecordCount = response.TotalRecords;
             response.ValidationFailureCount = response.RejectCount;
             response.SourceSystem = ResolveSourceSystem(findings);
 
@@ -330,6 +330,21 @@ public class IngestionService : IIngestionService
         return systems.Count switch { 0 => "Unknown", 1 => systems[0], _ => "Multiple" };
     }
 
+    private static int CountRejectedRecords(
+        List<FileFinding> findings,
+        List<RejectedRowSummary> rejectedRows)
+    {
+        var validationRejectedCount = findings.Count(x => !x.IsValid);
+
+        var rejectedRowCount = rejectedRows?
+            .Where(x => x.RowNumber > 0)
+            .Select(x => x.RowNumber)
+            .Distinct()
+            .Count() ?? 0;
+
+        return Math.Max(validationRejectedCount, rejectedRowCount);
+    }
+
     private static string SerializeFindingAsRawRow(FileFinding finding)
     {
         return JsonSerializer.Serialize(new
@@ -417,12 +432,13 @@ public class IngestionService : IIngestionService
     {
         var findings = new List<FileFinding>();
         using var reader = new StreamReader(stream);
-        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+        using var csv = new CsvHelper.CsvReader(reader, CultureInfo.InvariantCulture);
 
         try
         {
             if (!csv.Read())
                 throw new InvalidDataException("CSV file does not contain a header row.");
+
             csv.ReadHeader();
             ValidateHeaders(csv.HeaderRecord?.ToList() ?? new List<string>());
         }
@@ -431,15 +447,10 @@ public class IngestionService : IIngestionService
             throw new InvalidDataException($"CSV header validation failed. {ex.Message}", ex);
         }
 
-        while (true)
+        while (TryReadNextCsvRow(csv, jobId, uploadedBy, rejectedRows, out var rowNumber))
         {
-            var rowNumber = csv.Context.Parser.Row;
-
             try
             {
-                if (!csv.Read()) break;
-                rowNumber = csv.Context.Parser.Row;
-
                 var finding = MapCsvRowToFinding(csv, jobId, inboundFileName, uploadedBy, loadTime);
 
                 if (IsBlankFinding(finding))
@@ -453,28 +464,60 @@ public class IngestionService : IIngestionService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[MALFORMED ROW SKIPPED] JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
-
-                // Only create a RejectedRowSummary — do NOT add a FileFinding for malformed rows
-                rejectedRows.Add(new RejectedRowSummary
-                {
-                    RejectedRowId = Guid.NewGuid().ToString("N"),
-                    SourceRecordId = null,
-                    FindingFileName = null,
-                    FindingType = null,
-                    UserName = uploadedBy,
-                    RowNumber = rowNumber,
-                    FieldName = "CSV_ROW",
-                    RejectedValue = null,
-                    ErrorReason = $"Malformed CSV row. {ex.Message}",
-                    ErrorCategory = ErrorCategory.Others.ToString(),   // row could not be parsed — unclassified parse error
-                    ErrorDateUtc = DateTime.UtcNow,
-                    RawRowJson = null
-                });
+                AddMalformedCsvRejectedRow(jobId, uploadedBy, rowNumber, ex, rejectedRows);
             }
         }
 
         return findings;
+    }
+    private bool TryReadNextCsvRow(CsvHelper.CsvReader csv, string jobId, string uploadedBy, List<RejectedRowSummary> rejectedRows, out int rowNumber)
+    {
+        rowNumber = csv.Context.Parser.Row;
+
+        try
+        {
+            if (!csv.Read())
+                return false;
+
+            rowNumber = csv.Context.Parser.Row;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            rowNumber = csv.Context.Parser.Row;
+
+            AddMalformedCsvRejectedRow(jobId, uploadedBy, rowNumber, ex, rejectedRows);
+
+            // Stop processing because CsvHelper may not have advanced past the malformed row.
+            // Continuing can retry the same row forever.
+            return false;
+        }
+    }
+
+    private void AddMalformedCsvRejectedRow(
+        string jobId,
+        string uploadedBy,
+        int rowNumber,
+        Exception ex,
+        List<RejectedRowSummary> rejectedRows)
+    {
+        _logger.LogWarning(ex, "[MALFORMED ROW SKIPPED] JobId: {JobId}, RowNumber: {RowNumber}", jobId, rowNumber);
+
+        rejectedRows.Add(new RejectedRowSummary
+        {
+            RejectedRowId = Guid.NewGuid().ToString("N"),
+            SourceRecordId = null,
+            FindingFileName = null,
+            FindingType = null,
+            UserName = uploadedBy,
+            RowNumber = rowNumber,
+            FieldName = "CSV_ROW",
+            RejectedValue = null,
+            ErrorReason = $"Malformed CSV row. {ex.Message}",
+            ErrorCategory = ErrorCategory.Others.ToString(),
+            ErrorDateUtc = DateTime.UtcNow,
+            RawRowJson = null
+        });
     }
 
     private FileFinding MapExcelRowToFinding(
@@ -534,7 +577,7 @@ public class IngestionService : IIngestionService
     }
 
     private FileFinding MapCsvRowToFinding(
-        CsvReader csv, string jobId, string inboundFileName,
+        CsvHelper.CsvReader csv, string jobId, string inboundFileName,
         string uploadedBy, DateTime loadTime)
     {
         return new FileFinding
@@ -737,7 +780,7 @@ public class IngestionService : IIngestionService
             : string.Empty;
     }
 
-    private string GetCsvValue(CsvReader csv, string columnName)
+    private string GetCsvValue(CsvHelper.CsvReader csv, string columnName)
     {
         try
         {
@@ -1256,10 +1299,10 @@ public class IngestionService : IIngestionService
                 _ => throw new InvalidDataException($"Unsupported file format '{ext}'.")
             };
 
-            response.TotalRecords = findings.Count;
-            response.PayloadRecordCount = findings.Count;
-            response.RejectCount = findings.Count(x => !x.IsValid);
             response.SuccessCount = findings.Count(x => x.IsValid);
+            response.RejectCount = CountRejectedRecords(findings, response.RejectedRows);
+            response.TotalRecords = response.SuccessCount + response.RejectCount;
+            response.PayloadRecordCount = response.TotalRecords;
             response.ValidationFailureCount = response.RejectCount;
             response.FindingTypeCounts = findings
                 .Where(x => x.IsValid)
