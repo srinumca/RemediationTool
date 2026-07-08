@@ -1,4 +1,4 @@
-﻿using RemediationTool.Domain.Enum;
+using RemediationTool.Domain.Enum;
 
 namespace RemediationTool.Application.Models;
 
@@ -47,7 +47,29 @@ public class IngestionUploadResponse
 
     public int SuccessCount { get; set; }
 
-    public int RejectCount { get; set; }
+    private int _rejectCount;
+
+    /// <summary>
+    /// Number of rejected records.
+    ///
+    /// IngestionService counts invalid mapped findings, while parser-level malformed CSV rows
+    /// are recorded only in RejectedRows. Use the larger distinct rejected-row count so
+    /// malformed CSV rows are not missed in the response/audit counts.
+    /// </summary>
+    public int RejectCount
+    {
+        get
+        {
+            var rejectedRowCount = RejectedRows
+                .Where(x => x.RowNumber > 0)
+                .Select(x => x.RowNumber)
+                .Distinct()
+                .Count();
+
+            return Math.Max(_rejectCount, rejectedRowCount);
+        }
+        set => _rejectCount = value;
+    }
 
     public DateTime StartedAtUtc { get; set; }
 
