@@ -106,7 +106,23 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         => QueryGsi("jobId-loadDateUtc-index", "#jobId", "jobId", ingestionJobId);
 
     public IReadOnlyList<FileFinding> GetLatestByFindingType(string findingType)
-        => QueryGsi("findingType-loadDateUtc-index", "#ft", "findingType", findingType);
+    {
+        try
+        {
+            return QueryGsi("findingType-loadDateUtc-index", "#ft", "findingType", findingType);
+        }
+        catch (Exception ex) when (IsMissingIndexException(ex))
+        {
+            _logger.LogWarning(
+                ex,
+                "[DYNAMODB_GSI_MISSING_FALLBACK] Table:{Table}, Index:{IndexName}, FindingType:{FindingType}. Falling back to filtered scan.",
+                _tableName,
+                "findingType-loadDateUtc-index",
+                findingType);
+
+            return ScanByAttribute("findingType", findingType);
+        }
+    }
 
     public IReadOnlyList<FileFinding> GetLatestByDataSystem(string dataSystem)
         => QueryGsi("dataSystem-loadDateUtc-index", "#ds", "dataSystem", dataSystem);
@@ -299,5 +315,37 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         while (lastKey != null);
 
         return findings;
+    }
+
+    private IReadOnlyList<FileFinding> ScanByAttribute(string attributeName, string value)
+    {
+        var findings = new List<FileFinding>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = _dynamoDb.ScanAsync(new ScanRequest
+            {
+                TableName = _tableName,
+                FilterExpression = "#attr = :val",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#attr"] = attributeName },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                { [":val"] = new AttributeValue { S = value } },
+                ExclusiveStartKey = lastKey
+            }).GetAwaiter().GetResult();
+
+            findings.AddRange(response.Items.Select(DynamoDbAttributeMap.ToFileFinding));
+            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+        }
+        while (lastKey != null);
+
+        return findings;
+    }
+
+    private static bool IsMissingIndexException(Exception ex)
+    {
+        var message = ex.ToString();
+        return message.Contains("does not have the specified index", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("specified index", StringComparison.OrdinalIgnoreCase);
     }
 }
