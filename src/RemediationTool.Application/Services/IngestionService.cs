@@ -470,6 +470,16 @@ public class IngestionService : IIngestionService
 
         return findings;
     }
+
+    /// <summary>
+    /// Attempts to read the next row from the CSV file. If a malformed row is encountered, it logs the error and adds a rejected row summary.
+    /// </summary>
+    /// <param name="csv"></param>
+    /// <param name="jobId"></param>
+    /// <param name="uploadedBy"></param>
+    /// <param name="rejectedRows"></param>
+    /// <param name="rowNumber"></param>
+    /// <returns></returns>
     private bool TryReadNextCsvRow(CsvHelper.CsvReader csv, string jobId, string uploadedBy, List<RejectedRowSummary> rejectedRows, out int rowNumber)
     {
         rowNumber = csv.Context.Parser.Row;
