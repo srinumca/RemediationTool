@@ -37,6 +37,25 @@ public class IngestionProcessingOptions
     public bool ValidateWorkingFileAfterWrite { get; set; } = true;
 
     /// <summary>
+    /// Uses a verified Parquet working file as the normal resume source and avoids
+    /// duplicating every valid finding into the staging table.
+    /// </summary>
+    public bool UseParquetAsPrimaryResumeStore { get; set; } = true;
+
+    /// <summary>
+    /// Preserves the existing staging-table recovery path when Parquet is disabled
+    /// or cannot be created. Disable only after production validation.
+    /// </summary>
+    public bool LegacyStagingFallbackEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Controls how often job-audit progress is persisted. Checkpoints are still
+    /// written after every successful application batch. A value of 1 preserves
+    /// the existing status-polling behavior.
+    /// </summary>
+    public int JobAuditProgressUpdateIntervalBatches { get; set; } = 1;
+
+    /// <summary>
     /// Number of rows written to each Parquet row group. Larger row groups provide
     /// better compression and scan performance for high-volume ingestion datasets.
     /// </summary>
