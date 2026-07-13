@@ -47,7 +47,9 @@ public class UploadController : ControllerBase
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> Upload(IFormFile file)
+    public async Task<IActionResult> Upload(
+        IFormFile file,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation(
             "[UPLOAD REQUEST] FileName: {FileName} Size: {Size}",
@@ -55,7 +57,7 @@ public class UploadController : ControllerBase
 
         try
         {
-            var response = await _uploadService.UploadAsync(file);
+            var response = await _uploadService.UploadAsync(file, cancellationToken);
 
             if (!response.IsSuccess)
             {

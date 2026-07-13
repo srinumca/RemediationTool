@@ -42,14 +42,16 @@ internal sealed class InboundFileParser
         string jobId,
         string inboundFileName,
         string uploadedBy,
-        DateTime loadTime)
+        DateTime loadTime,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        cancellationToken.ThrowIfCancellationRequested();
 
         return extension.ToLowerInvariant() switch
         {
-            ".xlsx" => ParseExcel(stream, jobId, inboundFileName, uploadedBy, loadTime),
-            ".csv" => ParseCsv(stream, jobId, inboundFileName, uploadedBy, loadTime),
+            ".xlsx" => ParseExcel(stream, jobId, inboundFileName, uploadedBy, loadTime, cancellationToken),
+            ".csv" => ParseCsv(stream, jobId, inboundFileName, uploadedBy, loadTime, cancellationToken),
             _ => throw new InvalidDataException("Unsupported file format. Only .csv and .xlsx files are allowed.")
         };
     }
@@ -59,8 +61,10 @@ internal sealed class InboundFileParser
         string jobId,
         string inboundFileName,
         string uploadedBy,
-        DateTime loadTime)
+        DateTime loadTime,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var workbook = new XLWorkbook(stream);
         var sheet = workbook.Worksheet(1);
         var headerRow = sheet.FirstRowUsed()
@@ -73,6 +77,7 @@ internal sealed class InboundFileParser
 
         foreach (var row in sheet.RowsUsed().Where(r => r.RowNumber() > headerRow.RowNumber()))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var rowNumber = row.RowNumber();
             var finding = MapExcelRowToFinding(
                 row,
@@ -103,8 +108,10 @@ internal sealed class InboundFileParser
         string jobId,
         string inboundFileName,
         string uploadedBy,
-        DateTime loadTime)
+        DateTime loadTime,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var result = new InboundParseResult();
         var bufferSize = Math.Max(4096, _options.CsvReaderBufferSize);
 
@@ -132,6 +139,7 @@ internal sealed class InboundFileParser
 
         while (TryReadNextCsvRow(csv, jobId, uploadedBy, result, out var rowNumber))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var finding = MapCsvRowToFinding(
@@ -153,6 +161,10 @@ internal sealed class InboundFileParser
 
                 result.RegisterSourceSystem(finding.OriginatingDataSystem);
                 ValidateAndCollect(finding, rowNumber, result);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
