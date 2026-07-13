@@ -15,11 +15,9 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
 {
     private const int DynamoDbBatchLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
-    private const int MaximumSupportedBatchWriteConcurrency = 16;
 
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
-    private readonly int _maxBatchWriteConcurrency;
     private readonly ILogger<DynamoDbRejectedRowRepository> _logger;
 
     public DynamoDbRejectedRowRepository(
@@ -29,10 +27,6 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
     {
         _dynamoDb = dynamoDb;
         _tableName = options.Value.RejectedRowsTableName;
-        _maxBatchWriteConcurrency = Math.Clamp(
-            options.Value.MaxBatchWriteConcurrency,
-            1,
-            MaximumSupportedBatchWriteConcurrency);
         _logger = logger;
     }
 
@@ -96,45 +90,24 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
         if (rejectedRows == null || rejectedRows.Count == 0)
             return;
 
-        var batchCount = (rejectedRows.Count + DynamoDbBatchLimit - 1) / DynamoDbBatchLimit;
-
-        try
+        var chunkNumber = 0;
+        foreach (var chunk in rejectedRows.Chunk(DynamoDbBatchLimit))
         {
-            Parallel.For(
-                0,
-                batchCount,
-                new ParallelOptions
-                {
-                    MaxDegreeOfParallelism = _maxBatchWriteConcurrency
-                },
-                batchIndex =>
-                {
-                    var startIndex = batchIndex * DynamoDbBatchLimit;
-                    var count = Math.Min(DynamoDbBatchLimit, rejectedRows.Count - startIndex);
-                    var requests = new List<WriteRequest>(count);
+            chunkNumber++;
+            var requests = new List<WriteRequest>(chunk.Length);
 
-                    for (var offset = 0; offset < count; offset++)
+            foreach (var rejectedRow in chunk)
+            {
+                requests.Add(new WriteRequest
+                {
+                    PutRequest = new PutRequest
                     {
-                        requests.Add(new WriteRequest
-                        {
-                            PutRequest = new PutRequest
-                            {
-                                Item = DynamoDbAttributeMap.ToMap(rejectedRows[startIndex + offset])
-                            }
-                        });
+                        Item = DynamoDbAttributeMap.ToMap(rejectedRow)
                     }
-
-                    ExecuteBatchWriteWithRetry(
-                        requests,
-                        chunkNumber: batchIndex + 1,
-                        totalInputCount: rejectedRows.Count);
                 });
-        }
-        catch (AggregateException ex)
-        {
-            throw new InvalidOperationException(
-                $"Rejected-row persistence failed for table {_tableName}. Successful rows use stable IDs and remain safe to overwrite on retry.",
-                ex.Flatten());
+            }
+
+            ExecuteBatchWriteWithRetry(requests, chunkNumber, rejectedRows.Count);
         }
     }
 
