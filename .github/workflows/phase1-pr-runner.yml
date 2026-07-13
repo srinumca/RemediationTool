@@ -55,6 +55,11 @@ jobs:
 
           script = "\n".join(output_lines)
           exec(compile(script, 'phase1-apply-script', 'exec'))
+
+          test_path = Path('tests/RemediationTool.Infrastructure.Tests/IngestionResumeStoreCoordinatorTests.cs')
+          test_text = test_path.read_text(encoding='utf-8')
+          if not test_text.startswith('using Xunit;'):
+              test_path.write_text('using Xunit;\n' + test_text, encoding='utf-8')
           PY
           code=$?
           cat phase1-apply.log
