@@ -53,11 +53,20 @@ for statement in module.body:
         if occurrence == 0:
             convert_to_count(call, 2)
             new_body.append(statement)
-        # Drop the duplicate Step Function transform.
         continue
 
-    # Four transform calls cover three concrete source statements. One transform
-    # is a larger resume block that becomes redundant after the global replacement.
+    # Keep the dedicated successful-resume block. Its indentation differs from
+    # the two common resume summary statements and it also updates cleanup.
+    if (
+        "response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);" in old
+        and "response.MetadataJsonPath = response.ProcessingSummaryPath;" in old
+    ):
+        seen["resume-success"] = seen.get("resume-success", 0) + 1
+        new_body.append(statement)
+        continue
+
+    # Four transform calls cover three concrete common cleanup statements. The
+    # larger successful-resume transform above remains separate.
     if "CleanupStagingForCompletedJob(response);" in old:
         occurrence = seen.get("cleanup", 0)
         seen["cleanup"] = occurrence + 1
@@ -70,17 +79,11 @@ for statement in module.body:
             new_body.append(statement)
         continue
 
-    # Resume has three summary writes: load failure, no remaining records and
-    # successful completion. The later larger success block becomes redundant.
+    # Two common resume summary writes share the same indentation. Successful
+    # resume is handled by the dedicated block above.
     if old == "                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);\n":
-        convert_to_count(call, 3)
+        convert_to_count(call, 2)
         new_body.append(statement)
-        continue
-
-    if (
-        "response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);" in old
-        and "response.MetadataJsonPath = response.ProcessingSummaryPath;" in old
-    ):
         continue
 
     new_body.append(statement)
@@ -94,7 +97,8 @@ required_counts = {
     "persist": 2,
     "summary": 2,
     "failure-summary": 2,
-    "cleanup": 4,
+    "cleanup": 3,
+    "resume-success": 1,
 }
 for group, expected in required_counts.items():
     actual = seen.get(group, 0)
