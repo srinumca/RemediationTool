@@ -1,28 +1,49 @@
-﻿namespace RemediationTool.Infrastructure.Repositories;
+namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// Resilient file read/write helpers for the JSON-file-as-database repositories.
-/// Uses FileShare.ReadWrite so transient locks (editors, Explorer previews, antivirus
-/// scans, concurrent reads) don't cause IOExceptions, plus a short retry for the rare
-/// case where a lock is briefly exclusive.
+/// Resilient file read/write helpers for JSON-backed repositories.
 /// </summary>
 public static class JsonFileHelper
 {
+    private const int BufferSize = 81920;
+
     public static string ReadAllText(string filePath, int maxAttempts = 5, int delayMs = 100)
     {
         return WithRetry(() =>
         {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var stream = new FileStream(
+                filePath,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.Open,
+                    Access = FileAccess.Read,
+                    Share = FileShare.ReadWrite,
+                    BufferSize = BufferSize,
+                    Options = FileOptions.SequentialScan
+                });
             using var reader = new StreamReader(stream);
             return reader.ReadToEnd();
         }, maxAttempts, delayMs);
     }
 
-    public static void WriteAllText(string filePath, string content, int maxAttempts = 5, int delayMs = 100)
+    public static void WriteAllText(
+        string filePath,
+        string content,
+        int maxAttempts = 5,
+        int delayMs = 100)
     {
         WithRetry(() =>
         {
-            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            using var stream = new FileStream(
+                filePath,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.Create,
+                    Access = FileAccess.Write,
+                    Share = FileShare.Read,
+                    BufferSize = BufferSize,
+                    Options = FileOptions.SequentialScan
+                });
             using var writer = new StreamWriter(stream);
             writer.Write(content);
             return true;
@@ -31,18 +52,22 @@ public static class JsonFileHelper
 
     private static T WithRetry<T>(Func<T> action, int maxAttempts, int delayMs)
     {
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        ArgumentNullException.ThrowIfNull(action);
+
+        var attempts = Math.Max(1, maxAttempts);
+        var retryDelayMs = Math.Max(0, delayMs);
+
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
                 return action();
             }
-            catch (IOException) when (attempt < maxAttempts)
+            catch (IOException) when (attempt < attempts)
             {
-                Thread.Sleep(delayMs);
+                if (retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
             }
         }
-
-        return action(); // final attempt — let any exception propagate
     }
 }
