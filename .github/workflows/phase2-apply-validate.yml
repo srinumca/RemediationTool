@@ -29,8 +29,12 @@ jobs:
         shell: bash
         run: |
           set +e
-          python3 tools/apply_phase2_ingestion.py > phase2-apply.log 2>&1
+          python3 tools/normalize_phase2_transform_script.py > phase2-apply.log 2>&1
           code=$?
+          if [ "$code" -eq 0 ]; then
+            python3 tools/apply_phase2_ingestion.py >> phase2-apply.log 2>&1
+            code=$?
+          fi
           cat phase2-apply.log
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -64,6 +68,7 @@ jobs:
         run: |
           rm .github/workflows/phase2-apply-validate.yml
           rm tools/apply_phase2_ingestion.py
+          rm tools/normalize_phase2_transform_script.py
           rm -f phase2-apply.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
