@@ -52,7 +52,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add phase1-apply.log
+          git add -f phase1-apply.log
           git commit -m "Capture Phase 1 apply failure"
           git push origin HEAD:agent/phase1-parquet-first-ingestion
           exit 1
