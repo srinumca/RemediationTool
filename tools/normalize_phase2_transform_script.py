@@ -56,8 +56,8 @@ for statement in module.body:
         # Drop the duplicate Step Function transform.
         continue
 
-    # Manual ingestion, resume-success and Step Function ingestion use the same
-    # cleanup statement. The resume-empty path returns before staging cleanup.
+    # Four transform calls cover three concrete source statements. One transform
+    # is a larger resume block that becomes redundant after the global replacement.
     if "CleanupStagingForCompletedJob(response);" in old:
         occurrence = seen.get("cleanup", 0)
         seen["cleanup"] = occurrence + 1
@@ -68,7 +68,6 @@ for statement in module.body:
                 "                await CleanupStagingForCompletedJobAsync(response, cancellationToken);\n")
             convert_to_count(call, 3)
             new_body.append(statement)
-        # Later cleanup blocks are already covered by the global replacement.
         continue
 
     # Resume has three summary writes: load failure, no remaining records and
@@ -95,7 +94,7 @@ required_counts = {
     "persist": 2,
     "summary": 2,
     "failure-summary": 2,
-    "cleanup": 3,
+    "cleanup": 4,
 }
 for group, expected in required_counts.items():
     actual = seen.get(group, 0)
