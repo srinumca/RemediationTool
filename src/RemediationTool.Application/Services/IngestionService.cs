@@ -12,6 +12,7 @@ using RemediationTool.Application.Options;
 using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -31,6 +32,8 @@ public class IngestionService : IIngestionService
     private readonly IIngestionWorkingFileStrategy _workingFileStrategy;
     private readonly IAuditLogger _auditLogger;
     private readonly InboundFileParser _fileParser;
+    private readonly ResiliencePipeline _batchPersistencePipeline;
+    private readonly AsyncLocal<BatchPersistenceRetryState?> _batchPersistenceRetryState = new();
 
     private static readonly string[] AllowedUploadExtensions = { ".csv", ".xlsx" };
 
@@ -58,6 +61,42 @@ public class IngestionService : IIngestionService
         _workingFileStrategy = workingFileStrategy;
         _auditLogger = auditLogger;
         _fileParser = new InboundFileParser(validator, logger, _processingOptions);
+        _batchPersistencePipeline = new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = Math.Max(0, _processingOptions.MaxBatchPersistenceRetryCount),
+                Delay = TimeSpan.FromMilliseconds(
+                    Math.Max(0, _processingOptions.BatchPersistenceRetryDelayMilliseconds)),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<IOException>()
+                    .Handle<TimeoutException>()
+                    .Handle<InvalidOperationException>(),
+                OnRetry = args =>
+                {
+                    var state = _batchPersistenceRetryState.Value;
+                    if (state == null)
+                        return default;
+
+                    state.Response.BatchPersistenceRetryCount++;
+                    state.JobAudit.BatchPersistenceRetryCount = state.Response.BatchPersistenceRetryCount;
+
+                    if (_processingOptions.EnableBatchCheckpointing)
+                        _jobAuditRepository.Update(state.JobAudit);
+
+                    _logger.LogWarning(
+                        args.Outcome.Exception,
+                        "[INGESTION_BATCH_RETRY] JobId:{JobId}, BatchNumber:{BatchNumber}, TotalBatches:{TotalBatches}, Attempt:{AttemptNumber}, Delay:{RetryDelay}",
+                        state.Response.JobId,
+                        state.BatchNumber,
+                        state.TotalBatches,
+                        args.AttemptNumber + 1,
+                        args.RetryDelay);
+                    return default;
+                }
+            })
+            .Build();
     }
 
     public async Task<IngestionUploadResponse> ProcessAsync(IFormFile file)
@@ -124,14 +163,17 @@ public class IngestionService : IIngestionService
                 inboundFileName,
                 fileSizeBytes);
 
+            var sourceUploadStopwatch = Stopwatch.StartNew();
             await using (var sourceStream = file.OpenReadStream())
             {
                 await _storage.UploadAsync(sourceFilePath, sourceStream);
             }
+            LogStageDuration(reportUid, "SourceUpload", sourceUploadStopwatch, fileSizeBytes);
 
             response.SourceFilePath = sourceFilePath;
             response.ArchivedFilePath = sourceFilePath;
 
+            var parseStopwatch = Stopwatch.StartNew();
             using (var parseStream = file.OpenReadStream())
             {
                 parseResult = _fileParser.Parse(
@@ -142,30 +184,54 @@ public class IngestionService : IIngestionService
                     uploadedBy,
                     loadTime);
             }
+            LogStageDuration(reportUid, "ParseAndValidate", parseStopwatch, parseResult.TotalRecords);
 
             ApplyParseResult(response, parseResult);
+
+            var rejectedRowsStopwatch = Stopwatch.StartNew();
             PersistRejectedRows(reportUid, inboundFileName, parseResult.RejectedRows);
+            LogStageDuration(reportUid, "RejectedRowPersistence", rejectedRowsStopwatch, parseResult.RejectedRows.Count);
 
-            _stagingRepository.SaveValidFindings(reportUid, parseResult.ValidFindings);
-            await CreateWorkingFileAsync(response, jobAudit, parseResult.ValidFindings);
+            var resumeStoreStopwatch = Stopwatch.StartNew();
+            var stagingWritten = await PrepareResumeStoreAsync(
+                response,
+                jobAudit,
+                parseResult.ValidFindings);
+            LogStageDuration(reportUid, "ResumeStorePreparation", resumeStoreStopwatch, parseResult.ValidFindings.Count);
 
+            var targetPersistenceStopwatch = Stopwatch.StartNew();
             PersistValidFindingsInBatches(
                 parseResult.ValidFindings,
                 response,
                 jobAudit,
                 configuredBatchSize);
+            LogStageDuration(reportUid, "TargetPersistence", targetPersistenceStopwatch, parseResult.ValidFindings.Count);
 
             CompleteResponse(response);
             UpdateCheckpoint(response, jobAudit, response.Status);
 
+            var summaryStopwatch = Stopwatch.StartNew();
             var storedMetadataPath = await StoreProcessingSummaryAsync(
                 response,
                 parseResult.RejectedRows);
             response.MetadataJsonPath = storedMetadataPath;
             response.ProcessingSummaryPath = storedMetadataPath;
+            LogStageDuration(reportUid, "ProcessingSummary", summaryStopwatch, parseResult.RejectedRows.Count);
 
             UpdateJobAudit(jobAudit, response);
-            CleanupStagingForCompletedJob(response);
+            if (stagingWritten)
+            {
+                var cleanupStopwatch = Stopwatch.StartNew();
+                CleanupStagingForCompletedJob(response);
+                LogStageDuration(reportUid, "StagingCleanup", cleanupStopwatch, parseResult.ValidFindings.Count);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[STAGING_CLEANUP_SKIPPED] JobId:{JobId}, Reason:{Reason}",
+                    reportUid,
+                    "No staging records were written because verified Parquet is the primary resume store.");
+            }
             RecordCompletionAudit(response, jobAudit);
 
             _logger.LogInformation(
@@ -367,7 +433,11 @@ public class IngestionService : IIngestionService
                 reportUid,
                 jobAudit.InboundFileName);
 
+            var sourceDownloadStopwatch = Stopwatch.StartNew();
             await using var fileStream = await _storage.DownloadAsync(jobAudit.SourceFilePath);
+            LogStageDuration(reportUid, "SourceDownload", sourceDownloadStopwatch, jobAudit.FileSizeBytes);
+
+            var parseStopwatch = Stopwatch.StartNew();
             parseResult = _fileParser.Parse(
                 fileStream,
                 extension,
@@ -375,30 +445,54 @@ public class IngestionService : IIngestionService
                 jobAudit.InboundFileName,
                 uploadedBy,
                 loadTime);
+            LogStageDuration(reportUid, "ParseAndValidate", parseStopwatch, parseResult.TotalRecords);
 
             ApplyParseResult(response, parseResult);
+
+            var rejectedRowsStopwatch = Stopwatch.StartNew();
             PersistRejectedRows(reportUid, jobAudit.InboundFileName, parseResult.RejectedRows);
+            LogStageDuration(reportUid, "RejectedRowPersistence", rejectedRowsStopwatch, parseResult.RejectedRows.Count);
 
-            _stagingRepository.SaveValidFindings(reportUid, parseResult.ValidFindings);
-            await CreateWorkingFileAsync(response, jobAudit, parseResult.ValidFindings);
+            var resumeStoreStopwatch = Stopwatch.StartNew();
+            var stagingWritten = await PrepareResumeStoreAsync(
+                response,
+                jobAudit,
+                parseResult.ValidFindings);
+            LogStageDuration(reportUid, "ResumeStorePreparation", resumeStoreStopwatch, parseResult.ValidFindings.Count);
 
+            var targetPersistenceStopwatch = Stopwatch.StartNew();
             PersistValidFindingsInBatches(
                 parseResult.ValidFindings,
                 response,
                 jobAudit,
                 configuredBatchSize);
+            LogStageDuration(reportUid, "TargetPersistence", targetPersistenceStopwatch, parseResult.ValidFindings.Count);
 
             CompleteResponse(response);
             UpdateCheckpoint(response, jobAudit, response.Status);
 
+            var summaryStopwatch = Stopwatch.StartNew();
             var storedMetadataPath = await StoreProcessingSummaryAsync(
                 response,
                 parseResult.RejectedRows);
             response.MetadataJsonPath = storedMetadataPath;
             response.ProcessingSummaryPath = storedMetadataPath;
+            LogStageDuration(reportUid, "ProcessingSummary", summaryStopwatch, parseResult.RejectedRows.Count);
 
             UpdateJobAudit(jobAudit, response);
-            CleanupStagingForCompletedJob(response);
+            if (stagingWritten)
+            {
+                var cleanupStopwatch = Stopwatch.StartNew();
+                CleanupStagingForCompletedJob(response);
+                LogStageDuration(reportUid, "StagingCleanup", cleanupStopwatch, parseResult.ValidFindings.Count);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[STAGING_CLEANUP_SKIPPED] JobId:{JobId}, Reason:{Reason}",
+                    reportUid,
+                    "No staging records were written because verified Parquet is the primary resume store.");
+            }
             RecordCompletionAudit(response, jobAudit);
 
             _logger.LogInformation(
@@ -552,6 +646,59 @@ public class IngestionService : IIngestionService
         UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Started);
     }
 
+    private async Task<bool> PrepareResumeStoreAsync(
+        IngestionUploadResponse response,
+        IngestionJobAudit jobAudit,
+        IReadOnlyList<FileFinding> validFindings)
+    {
+        var result = await IngestionResumeStoreCoordinator.PrepareAsync(
+            _processingOptions,
+            validFindings.Count,
+            createParquetAsync: () => CreateWorkingFileAsync(response, jobAudit, validFindings),
+            writeStaging: () => _stagingRepository.SaveValidFindings(response.JobId, validFindings.ToList()),
+            clearParquetMetadata: () => ClearWorkingFileMetadata(response, jobAudit));
+
+        if (result.ParquetFailure != null)
+        {
+            _logger.LogWarning(
+                result.ParquetFailure,
+                "[PARQUET_PRIMARY_FAILED_STAGING_FALLBACK] JobId:{JobId}, Records:{Records}",
+                response.JobId,
+                validFindings.Count);
+        }
+
+        if (result.StagingWritten)
+        {
+            // Store the parsed counts before target persistence so a failed first
+            // batch can resume from the staging fallback.
+            UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Started);
+            if (_processingOptions.EnableBatchCheckpointing)
+                _jobAuditRepository.Update(jobAudit);
+        }
+        else if (result.ParquetReady)
+        {
+            _logger.LogInformation(
+                "[STAGING_WRITE_SKIPPED] JobId:{JobId}, Records:{Records}, ResumeStore:{ResumeStore}",
+                response.JobId,
+                validFindings.Count,
+                _workingFileStrategy.Format);
+        }
+
+        return result.StagingWritten;
+    }
+
+    private static void ClearWorkingFileMetadata(
+        IngestionUploadResponse response,
+        IngestionJobAudit jobAudit)
+    {
+        response.WorkingFileFormat = null;
+        response.WorkingFilePath = null;
+        response.WorkingFileRecordCount = 0;
+        jobAudit.WorkingFileFormat = null;
+        jobAudit.WorkingFilePath = null;
+        jobAudit.WorkingFileRecordCount = 0;
+    }
+
     private void PersistValidFindingsInBatches(
         List<FileFinding> validFindings,
         IngestionUploadResponse response,
@@ -577,7 +724,7 @@ public class IngestionService : IIngestionService
         foreach (var chunk in validFindings.Chunk(batchSize))
         {
             batchNumber++;
-            var records = chunk.ToList();
+            IReadOnlyList<FileFinding> records = chunk;
 
             try
             {
@@ -596,7 +743,8 @@ public class IngestionService : IIngestionService
                 if (_processingOptions.EnableBatchCheckpointing)
                 {
                     UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Started);
-                    _jobAuditRepository.Update(jobAudit);
+                    if (ShouldPersistJobAuditProgress(batchNumber, response.TotalBatches))
+                        _jobAuditRepository.Update(jobAudit);
                 }
             }
             catch (Exception ex)
@@ -634,7 +782,7 @@ public class IngestionService : IIngestionService
         foreach (var chunk in remainingFindings.Chunk(batchSize))
         {
             batchNumber++;
-            var records = chunk.ToList();
+            IReadOnlyList<FileFinding> records = chunk;
 
             try
             {
@@ -653,7 +801,8 @@ public class IngestionService : IIngestionService
                 if (_processingOptions.EnableBatchCheckpointing)
                 {
                     UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Started);
-                    _jobAuditRepository.Update(jobAudit);
+                    if (ShouldPersistJobAuditProgress(batchNumber, response.TotalBatches))
+                        _jobAuditRepository.Update(jobAudit);
                 }
 
                 _logger.LogInformation(
@@ -675,46 +824,27 @@ public class IngestionService : IIngestionService
     }
 
     private void PersistBatchWithRetry(
-        List<FileFinding> records,
+        IReadOnlyList<FileFinding> records,
         int batchNumber,
         int totalBatches,
         IngestionUploadResponse response,
         IngestionJobAudit jobAudit)
     {
-        var pipeline = new ResiliencePipelineBuilder()
-            .AddRetry(new RetryStrategyOptions
-            {
-                MaxRetryAttempts = Math.Max(0, _processingOptions.MaxBatchPersistenceRetryCount),
-                Delay = TimeSpan.FromMilliseconds(
-                    Math.Max(0, _processingOptions.BatchPersistenceRetryDelayMilliseconds)),
-                BackoffType = DelayBackoffType.Exponential,
-                UseJitter = true,
-                ShouldHandle = new PredicateBuilder()
-                    .Handle<IOException>()
-                    .Handle<TimeoutException>()
-                    .Handle<InvalidOperationException>(),
-                OnRetry = args =>
-                {
-                    response.BatchPersistenceRetryCount++;
-                    jobAudit.BatchPersistenceRetryCount = response.BatchPersistenceRetryCount;
+        var previousState = _batchPersistenceRetryState.Value;
+        _batchPersistenceRetryState.Value = new BatchPersistenceRetryState(
+            response,
+            jobAudit,
+            batchNumber,
+            totalBatches);
 
-                    if (_processingOptions.EnableBatchCheckpointing)
-                        _jobAuditRepository.Update(jobAudit);
-
-                    _logger.LogWarning(
-                        args.Outcome.Exception,
-                        "[INGESTION_BATCH_RETRY] JobId:{JobId}, BatchNumber:{BatchNumber}, TotalBatches:{TotalBatches}, Attempt:{AttemptNumber}, Delay:{RetryDelay}",
-                        response.JobId,
-                        batchNumber,
-                        totalBatches,
-                        args.AttemptNumber + 1,
-                        args.RetryDelay);
-                    return default;
-                }
-            })
-            .Build();
-
-        pipeline.Execute(() => _repository.AddRange(records));
+        try
+        {
+            _batchPersistencePipeline.Execute(() => _repository.AddRange(records));
+        }
+        finally
+        {
+            _batchPersistenceRetryState.Value = previousState;
+        }
     }
 
     private async Task<List<FileFinding>> LoadRecordsForResumeAsync(
@@ -1248,6 +1378,35 @@ public class IngestionService : IIngestionService
         jobAudit.BatchPersistenceRetryCount = response.BatchPersistenceRetryCount;
     }
 
+    private bool ShouldPersistJobAuditProgress(int batchNumber, int totalBatches)
+    {
+        var interval = Math.Max(1, _processingOptions.JobAuditProgressUpdateIntervalBatches);
+        return interval == 1
+            || batchNumber == totalBatches
+            || batchNumber % interval == 0;
+    }
+
+    private void LogStageDuration(
+        string jobId,
+        string stage,
+        Stopwatch stopwatch,
+        long itemCount)
+    {
+        stopwatch.Stop();
+        _logger.LogInformation(
+            "[INGESTION_STAGE_COMPLETE] JobId:{JobId}, Stage:{Stage}, ElapsedMs:{ElapsedMs}, ItemCount:{ItemCount}",
+            jobId,
+            stage,
+            stopwatch.ElapsedMilliseconds,
+            itemCount);
+    }
+
     private static string? FirstNotEmpty(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private sealed record BatchPersistenceRetryState(
+        IngestionUploadResponse Response,
+        IngestionJobAudit JobAudit,
+        int BatchNumber,
+        int TotalBatches);
 }
