@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Domain.Entities;
@@ -7,21 +7,19 @@ namespace RemediationTool.Infrastructure.Repositories;
 
 public class JsonIngestionCheckpointRepository : IIngestionCheckpointRepository
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
     private readonly string _filePath;
-    private readonly JsonSerializerOptions _jsonOptions;
+    private readonly object _lock = new();
 
     public JsonIngestionCheckpointRepository()
     {
         var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
-
         _filePath = Path.Combine(dataDirectory, "ingestion-checkpoints.json");
 
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
+        if (!File.Exists(_filePath))
+            JsonFileHelper.WriteAllText(_filePath, "[]");
     }
 
     public IngestionCheckpoint? GetByJobId(string jobId)
@@ -29,35 +27,38 @@ public class JsonIngestionCheckpointRepository : IIngestionCheckpointRepository
         if (string.IsNullOrWhiteSpace(jobId))
             return null;
 
-        var checkpoints = LoadAll();
-
-        return checkpoints.FirstOrDefault(checkpoint =>
-            string.Equals(checkpoint.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+        lock (_lock)
+        {
+            return LoadAll().Find(checkpoint =>
+                string.Equals(checkpoint.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     public void Upsert(IngestionCheckpoint checkpoint)
     {
-        if (checkpoint == null)
-            throw new ArgumentNullException(nameof(checkpoint));
+        ArgumentNullException.ThrowIfNull(checkpoint);
 
-        var checkpoints = LoadAll();
-
-        var existingIndex = checkpoints.FindIndex(existing =>
-            string.Equals(existing.JobId, checkpoint.JobId, StringComparison.OrdinalIgnoreCase));
-
-        checkpoint.LastCheckpointUtc = DateTime.UtcNow;
-
-        if (existingIndex >= 0)
+        lock (_lock)
         {
-            checkpoints[existingIndex] = checkpoint;
-        }
-        else
-        {
-            checkpoint.CreatedAtUtc = DateTime.UtcNow;
-            checkpoints.Add(checkpoint);
-        }
+            var checkpoints = LoadAll();
+            var existingIndex = checkpoints.FindIndex(existing =>
+                string.Equals(existing.JobId, checkpoint.JobId, StringComparison.OrdinalIgnoreCase));
 
-        SaveAll(checkpoints);
+            var nowUtc = DateTime.UtcNow;
+            checkpoint.LastCheckpointUtc = nowUtc;
+
+            if (existingIndex >= 0)
+            {
+                checkpoints[existingIndex] = checkpoint;
+            }
+            else
+            {
+                checkpoint.CreatedAtUtc = nowUtc;
+                checkpoints.Add(checkpoint);
+            }
+
+            SaveAll(checkpoints);
+        }
     }
 
     private List<IngestionCheckpoint> LoadAll()
@@ -65,18 +66,27 @@ public class JsonIngestionCheckpointRepository : IIngestionCheckpointRepository
         if (!File.Exists(_filePath))
             return new List<IngestionCheckpoint>();
 
-        var json = File.ReadAllText(_filePath);
-
+        var json = JsonFileHelper.ReadAllText(_filePath);
         if (string.IsNullOrWhiteSpace(json))
             return new List<IngestionCheckpoint>();
 
-        return JsonSerializer.Deserialize<List<IngestionCheckpoint>>(json, _jsonOptions)
+        return JsonSerializer.Deserialize<List<IngestionCheckpoint>>(json, JsonOptions)
                ?? new List<IngestionCheckpoint>();
     }
 
     private void SaveAll(List<IngestionCheckpoint> checkpoints)
     {
-        var json = JsonSerializer.Serialize(checkpoints, _jsonOptions);
-        File.WriteAllText(_filePath, json);
+        var json = JsonSerializer.Serialize(checkpoints, JsonOptions);
+        JsonFileHelper.WriteAllText(_filePath, json);
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 }
