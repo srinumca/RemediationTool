@@ -16,6 +16,14 @@ public class IngestionProcessingOptions
 
     public int BatchPersistenceRetryDelayMilliseconds { get; set; } = 1000;
 
+    /// <summary>
+    /// Maximum number of DynamoDB BatchWriteItem requests allowed to run at the
+    /// same time. A bounded value improves large-file throughput without
+    /// creating unbounded pressure or changing checkpoint semantics.
+    /// Set to 1 to restore sequential behavior.
+    /// </summary>
+    public int DynamoDbMaxConcurrentBatchWrites { get; set; } = 4;
+
     public bool EnableParquetWorkingFile { get; set; } = true;
 
     /// <summary>
