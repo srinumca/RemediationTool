@@ -38,9 +38,11 @@ public class IngestionProcessingOptions
 
     /// <summary>
     /// Uses a verified Parquet working file as the normal resume source and avoids
-    /// duplicating every valid finding into the staging table.
+    /// duplicating every valid finding into the staging table. Disabled by default
+    /// so the existing dual-store recovery behavior remains unchanged until the
+    /// Parquet-first path is validated in the target AWS environment.
     /// </summary>
-    public bool UseParquetAsPrimaryResumeStore { get; set; } = true;
+    public bool UseParquetAsPrimaryResumeStore { get; set; } = false;
 
     /// <summary>
     /// Preserves the existing staging-table recovery path when Parquet is disabled
