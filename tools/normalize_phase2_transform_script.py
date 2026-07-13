@@ -55,6 +55,25 @@ for statement in module.body:
             new_body.append(statement)
         continue
 
+    # The original two-line fragment appears both in a log call and in the
+    # Parquet read. Scope the transform to the actual ReadAfterAsync invocation.
+    if old == (
+        "                    workingFilePath,\n"
+        "                    checkpoint.LastProcessedRecordCount);\n"
+    ):
+        seen["parquet-read"] = seen.get("parquet-read", 0) + 1
+        call.args[1] = ast.Constant(
+            "                var records = await _workingFileStrategy.ReadAfterAsync(\n"
+            "                    workingFilePath,\n"
+            "                    checkpoint.LastProcessedRecordCount);\n")
+        call.args[2] = ast.Constant(
+            "                var records = await _workingFileStrategy.ReadAfterAsync(\n"
+            "                    workingFilePath,\n"
+            "                    checkpoint.LastProcessedRecordCount,\n"
+            "                    cancellationToken);\n")
+        new_body.append(statement)
+        continue
+
     # Keep the dedicated successful-resume block. Its indentation differs from
     # the two common resume summary statements and it also updates cleanup.
     if (
@@ -97,8 +116,9 @@ required_counts = {
     "persist": 2,
     "summary": 2,
     "failure-summary": 2,
-    "cleanup": 3,
+    "cleanup": 4,
     "resume-success": 1,
+    "parquet-read": 1,
 }
 for group, expected in required_counts.items():
     actual = seen.get(group, 0)
