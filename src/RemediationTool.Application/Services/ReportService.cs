@@ -158,10 +158,13 @@ public class ReportService
     {
         var findings = _repository.GetAll();
         var normalizedTab = string.IsNullOrWhiteSpace(tab) ? null : NormalizeTab(tab);
+        var parsedStatus = default(FileStatus);
         var hasStatusFilter = !string.IsNullOrWhiteSpace(status)
-                              && Enum.TryParse<FileStatus>(status, ignoreCase: true, out var parsedStatus);
+                              && Enum.TryParse(status, ignoreCase: true, out parsedStatus);
 
-        var estimatedCapacity = Math.Min(1_048_576, Math.Max(1024, findings.Count * 128));
+        var estimatedCapacity = (int)Math.Min(
+            1_048_576L,
+            Math.Max(1024L, (long)findings.Count * 128L));
         var csv = new StringBuilder(estimatedCapacity);
         csv.AppendLine("FileName,FindingType,Status,CurrentFileLocation,OriginalFileLocation,QuarantineDateUtc,RestorationDateUtc,DeletionDateUtc,DataSystem,SiteOwner,FileOwner,LastModifiedDate,QuarantinePath");
 
