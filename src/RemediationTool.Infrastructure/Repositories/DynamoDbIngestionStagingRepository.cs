@@ -5,24 +5,23 @@ using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Infrastructure.DynamoDB;
+using System.Globalization;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
 /// Persists valid ingestion records temporarily so resume can fall back to
 /// DynamoDB when a Parquet working file is unavailable or unreadable.
-/// Parquet creation and reading are owned by IngestionService to keep the
-/// behavior identical for DynamoDB and JSON persistence providers.
 /// </summary>
 public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 {
-    private readonly IAmazonDynamoDB _dynamoDb;
-    private readonly string _tableName;
-    private readonly ILogger<DynamoDbIngestionStagingRepository> _logger;
-
     private const int BatchWriteLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
     private static readonly TimeSpan TtlDuration = TimeSpan.FromDays(7);
+
+    private readonly IAmazonDynamoDB _dynamoDb;
+    private readonly string _tableName;
+    private readonly ILogger<DynamoDbIngestionStagingRepository> _logger;
 
     public DynamoDbIngestionStagingRepository(
         IAmazonDynamoDB dynamoDb,
@@ -50,7 +49,12 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
         DeleteByJobId(jobId);
 
-        var expiresAt = DateTimeOffset.UtcNow.Add(TtlDuration).ToUnixTimeSeconds();
+        var nowUtc = DateTime.UtcNow;
+        var createdAtText = nowUtc.ToString("O", CultureInfo.InvariantCulture);
+        var expiresAtText = new DateTimeOffset(nowUtc.Add(TtlDuration))
+            .ToUnixTimeSeconds()
+            .ToString(CultureInfo.InvariantCulture);
+
         var sequenceNumber = 1;
         var chunkNumber = 0;
 
@@ -61,24 +65,33 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
             foreach (var finding in chunk)
             {
-                var item = new Dictionary<string, AttributeValue>
+                var item = new Dictionary<string, AttributeValue>(5)
                 {
                     ["jobId"] = new AttributeValue { S = jobId },
-                    ["sequenceNumber"] = new AttributeValue { N = sequenceNumber.ToString() },
-                    ["CreatedAtUtc"] = new AttributeValue { S = DateTime.UtcNow.ToString("O") },
-                    ["ExpiresAt"] = new AttributeValue { N = expiresAt.ToString() },
-                    ["finding"] = new AttributeValue { M = DynamoDbAttributeMap.ToMap(finding) }
+                    ["sequenceNumber"] = new AttributeValue
+                    {
+                        N = sequenceNumber.ToString(CultureInfo.InvariantCulture)
+                    },
+                    ["CreatedAtUtc"] = new AttributeValue { S = createdAtText },
+                    ["ExpiresAt"] = new AttributeValue { N = expiresAtText },
+                    ["finding"] = new AttributeValue
+                    {
+                        M = DynamoDbAttributeMap.ToMap(finding)
+                    }
                 };
 
-                writeRequests.Add(new WriteRequest { PutRequest = new PutRequest { Item = item } });
+                writeRequests.Add(new WriteRequest
+                {
+                    PutRequest = new PutRequest { Item = item }
+                });
                 sequenceNumber++;
             }
 
             ExecuteBatchWriteWithRetry(
                 writeRequests,
                 operationName: "StagingSave",
-                jobId: jobId,
-                chunkNumber: chunkNumber,
+                jobId,
+                chunkNumber,
                 totalInputCount: validFindings.Count);
         }
 
@@ -89,14 +102,17 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             chunkNumber);
     }
 
-    public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
+    public List<FileFinding> GetValidFindingsAfter(
+        string jobId,
+        int lastProcessedRecordCount)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return new List<FileFinding>();
 
         _logger.LogInformation(
             "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
-            jobId, lastProcessedRecordCount);
+            jobId,
+            lastProcessedRecordCount);
 
         var findings = new List<FileFinding>();
         Dictionary<string, AttributeValue>? lastKey = null;
@@ -110,19 +126,26 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId },
-                    [":lastSeq"] = new AttributeValue { N = lastProcessedRecordCount.ToString() }
+                    [":lastSeq"] = new AttributeValue
+                    {
+                        N = lastProcessedRecordCount.ToString(CultureInfo.InvariantCulture)
+                    }
                 },
                 ScanIndexForward = true,
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 
+            findings.EnsureCapacity(findings.Count + response.Items.Count);
             foreach (var item in response.Items)
             {
-                if (item.TryGetValue("finding", out var findingAttr) && findingAttr.M != null)
-                    findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttr.M));
+                if (item.TryGetValue("finding", out var findingAttribute)
+                    && findingAttribute.M != null)
+                {
+                    findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttribute.M));
+                }
             }
 
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
         }
         while (lastKey != null);
 
@@ -140,18 +163,29 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         if (string.IsNullOrWhiteSpace(jobId))
             return 0;
 
-        var response = _dynamoDb.QueryAsync(new QueryRequest
-        {
-            TableName = _tableName,
-            KeyConditionExpression = "jobId = :jobId",
-            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-            {
-                [":jobId"] = new AttributeValue { S = jobId }
-            },
-            Select = Select.COUNT
-        }).GetAwaiter().GetResult();
+        var count = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
 
-        return response.Count ?? 0;
+        do
+        {
+            var response = _dynamoDb.QueryAsync(new QueryRequest
+            {
+                TableName = _tableName,
+                KeyConditionExpression = "jobId = :jobId",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":jobId"] = new AttributeValue { S = jobId }
+                },
+                Select = Select.COUNT,
+                ExclusiveStartKey = lastKey
+            }).GetAwaiter().GetResult();
+
+            count += response.Count ?? 0;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+        }
+        while (lastKey != null);
+
+        return count;
     }
 
     public void DeleteByJobId(string jobId)
@@ -159,8 +193,9 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         if (string.IsNullOrWhiteSpace(jobId))
             return;
 
-        var keysToDelete = new List<Dictionary<string, AttributeValue>>();
         Dictionary<string, AttributeValue>? lastKey = null;
+        var deletedCount = 0;
+        var chunkNumber = 0;
 
         do
         {
@@ -176,39 +211,40 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 
-            keysToDelete.AddRange(response.Items);
-            lastKey = response.LastEvaluatedKey?.Count > 0 ? response.LastEvaluatedKey : null;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+
+            foreach (var chunk in response.Items.Chunk(BatchWriteLimit))
+            {
+                chunkNumber++;
+                var deleteRequests = new List<WriteRequest>(chunk.Length);
+
+                foreach (var key in chunk)
+                {
+                    deleteRequests.Add(new WriteRequest
+                    {
+                        DeleteRequest = new DeleteRequest { Key = key }
+                    });
+                }
+
+                ExecuteBatchWriteWithRetry(
+                    deleteRequests,
+                    operationName: "StagingDelete",
+                    jobId,
+                    chunkNumber,
+                    totalInputCount: response.Items.Count);
+
+                deletedCount += chunk.Length;
+            }
         }
         while (lastKey != null);
 
-        if (keysToDelete.Count == 0)
+        if (deletedCount == 0)
             return;
-
-        _logger.LogInformation(
-            "[STAGING_DELETE_START] JobId:{JobId}, Records:{Records}",
-            jobId,
-            keysToDelete.Count);
-
-        var chunkNumber = 0;
-        foreach (var chunk in keysToDelete.Chunk(BatchWriteLimit))
-        {
-            chunkNumber++;
-            var deleteRequests = chunk
-                .Select(key => new WriteRequest { DeleteRequest = new DeleteRequest { Key = key } })
-                .ToList();
-
-            ExecuteBatchWriteWithRetry(
-                deleteRequests,
-                operationName: "StagingDelete",
-                jobId: jobId,
-                chunkNumber: chunkNumber,
-                totalInputCount: keysToDelete.Count);
-        }
 
         _logger.LogInformation(
             "[STAGING_DELETE_COMPLETE] JobId:{JobId}, Records:{Records}, Chunks:{Chunks}",
             jobId,
-            keysToDelete.Count,
+            deletedCount,
             chunkNumber);
     }
 
@@ -228,12 +264,11 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         };
 
         var retryAttempt = 0;
-
         while (true)
         {
             var response = _dynamoDb.BatchWriteItemAsync(remaining).GetAwaiter().GetResult();
 
-            if (response.UnprocessedItems == null || !response.UnprocessedItems.Any())
+            if (response.UnprocessedItems == null || response.UnprocessedItems.Count == 0)
             {
                 _logger.LogInformation(
                     "[STAGING_BATCH_WRITE_COMPLETE] Operation:{Operation}, JobId:{JobId}, Table:{Table}, ChunkNumber:{ChunkNumber}, ChunkSize:{ChunkSize}, TotalInputCount:{TotalInputCount}, RetryAttempts:{RetryAttempts}",
@@ -247,9 +282,11 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 return;
             }
 
-            var unprocessedCount = response.UnprocessedItems.Values.Sum(items => items.Count);
-            retryAttempt++;
+            var unprocessedCount = 0;
+            foreach (var items in response.UnprocessedItems.Values)
+                unprocessedCount += items.Count;
 
+            retryAttempt++;
             if (retryAttempt >= MaxUnprocessedItemRetryAttempts)
             {
                 _logger.LogError(
@@ -277,7 +314,14 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 delay.TotalMilliseconds);
 
             Thread.Sleep(delay);
-            remaining = new BatchWriteItemRequest { RequestItems = response.UnprocessedItems };
+            remaining = new BatchWriteItemRequest
+            {
+                RequestItems = response.UnprocessedItems
+            };
         }
     }
+
+    private static Dictionary<string, AttributeValue>? GetNextKey(
+        Dictionary<string, AttributeValue>? lastEvaluatedKey)
+        => lastEvaluatedKey?.Count > 0 ? lastEvaluatedKey : null;
 }
