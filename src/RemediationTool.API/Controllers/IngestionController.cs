@@ -53,7 +53,9 @@ public class IngestionController : ControllerBase
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> Ingest(string reportUid)
+    public async Task<IActionResult> Ingest(
+        string reportUid,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(reportUid))
             return BadRequest("ReportUID is required.");
@@ -62,7 +64,7 @@ public class IngestionController : ControllerBase
 
         try
         {
-            var response = await _ingestionService.IngestAsync(reportUid);
+            var response = await _ingestionService.IngestAsync(reportUid, cancellationToken);
 
             _logger.LogInformation(
                 "[INGESTION RESPONSE] ReportUid: {ReportUid} Status: {Status} Total: {Total} Success: {Success} Rejected: {Rejected}",
@@ -94,7 +96,9 @@ public class IngestionController : ControllerBase
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> Resume(string reportUid)
+    public async Task<IActionResult> Resume(
+        string reportUid,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(reportUid))
             return BadRequest("ReportUID is required.");
@@ -103,7 +107,7 @@ public class IngestionController : ControllerBase
 
         try
         {
-            var response = await _ingestionService.ResumeAsync(reportUid);
+            var response = await _ingestionService.ResumeAsync(reportUid, cancellationToken);
 
             _logger.LogInformation(
                 "[INGESTION RESUME RESPONSE] ReportUid: {ReportUid} Status: {Status}",
