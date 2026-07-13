@@ -4,7 +4,12 @@ public class IngestionProcessingOptions
 {
     public const string SectionName = "IngestionProcessing";
 
-    public int BatchSize { get; set; } = 1000;
+    /// <summary>
+    /// Number of validated findings handled by one application-level persistence batch.
+    /// DynamoDB still writes in groups of 25 internally; a larger outer batch reduces
+    /// checkpoint, audit, and retry-pipeline overhead without changing record identity.
+    /// </summary>
+    public int BatchSize { get; set; } = 5000;
 
     public int MaxBatchSize { get; set; } = 10000;
 
@@ -25,6 +30,11 @@ public class IngestionProcessingOptions
     public int DynamoDbMaxConcurrentBatchWrites { get; set; } = 4;
 
     public bool EnableParquetWorkingFile { get; set; } = true;
+
+    /// <summary>
+    /// Confirms that the uploaded working file exists before final findings are persisted.
+    /// </summary>
+    public bool ValidateWorkingFileAfterWrite { get; set; } = true;
 
     /// <summary>
     /// Number of rows written to each Parquet row group. Larger row groups provide

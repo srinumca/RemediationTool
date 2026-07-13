@@ -48,20 +48,35 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
 
         await using var parquetStream = new MemoryStream();
 
-        // Keep row conversion lazy so the ingestion list is not duplicated by an
-        // additional List<ParquetFindingRow> before serialization.
         await ParquetSerializer.SerializeAsync(
             validFindings.Select(ToParquetRow),
             parquetStream,
             parquetOptions,
             cancellationToken: cancellationToken);
 
+        if (parquetStream.Length == 0 && validFindings.Count > 0)
+        {
+            throw new InvalidDataException(
+                $"Parquet serialization produced an empty working file for job {jobId} with {validFindings.Count} valid records.");
+        }
+
         parquetStream.Position = 0;
         await _storage.UploadAsync(workingFilePath, parquetStream);
 
+        if (_options.ValidateWorkingFileAfterWrite
+            && !await _storage.ExistsAsync(workingFilePath))
+        {
+            throw new IOException(
+                $"Parquet working file verification failed for job {jobId}. The uploaded object was not found at '{workingFilePath}'.");
+        }
+
         _logger.LogInformation(
-            "[PARQUET_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}, Bytes:{Bytes}",
-            jobId, workingFilePath, validFindings.Count, parquetStream.Length);
+            "[PARQUET_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}, Bytes:{Bytes}, Verified:{Verified}",
+            jobId,
+            workingFilePath,
+            validFindings.Count,
+            parquetStream.Length,
+            _options.ValidateWorkingFileAfterWrite);
 
         return new IngestionWorkingFileResult
         {

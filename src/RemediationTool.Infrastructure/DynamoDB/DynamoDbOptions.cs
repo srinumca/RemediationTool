@@ -1,16 +1,8 @@
 ﻿namespace RemediationTool.Infrastructure.DynamoDB;
 
 /// <summary>
-/// DynamoDB table name configuration.
-/// Bound from appsettings.json section: AWS:DynamoDB
-/// Note: section key must be exactly "DynamoDB" (case-sensitive).
-///
-/// Tables in use (5 — finding history table removed):
-///   gfr-file-metadata-dev           → job audit / report records
-///   gfr-file-findings-dev           → valid ingested findings
-///   gfr-rejected-rows-dev           → validation failures
-///   gfr-ingestion-checkpoints-dev   → resume checkpoints
-///   gfr-ingestion-staged-findings-dev → temp staging (TTL 7 days)
+/// DynamoDB table and ingestion-write configuration.
+/// Bound from appsettings.json section: AWS:DynamoDB.
 /// </summary>
 public class DynamoDbOptions
 {
@@ -23,5 +15,10 @@ public class DynamoDbOptions
     public string StagedFindingsTableName { get; set; } = "gfr-ingestion-staged-findings-dev";
     public string HistoryTableName { get; set; } = "gfr-finding-history-dev";
 
-    // Removed: HistoryTableName — gfr-finding-history-dev not used
+    /// <summary>
+    /// Maximum number of independent 25-item BatchWriteItem requests executed at once.
+    /// A bounded value improves large-file throughput while preserving per-request retry
+    /// handling and preventing uncontrolled DynamoDB throttling.
+    /// </summary>
+    public int MaxBatchWriteConcurrency { get; set; } = 4;
 }
