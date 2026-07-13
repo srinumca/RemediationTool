@@ -1,9 +1,9 @@
 name: Agent build validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/solution-wide-safe-optimizations
+      - main
   workflow_dispatch:
 
 permissions:
