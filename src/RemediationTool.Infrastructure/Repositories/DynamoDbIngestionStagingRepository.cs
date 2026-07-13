@@ -3,21 +3,21 @@ using Amazon.DynamoDBv2.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
-using RemediationTool.Application.Options;
-using RemediationTool.Application.Repositories;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Infrastructure.DynamoDB;
-using RemediationTool.Infrastructure.Strategies;
 
 namespace RemediationTool.Infrastructure.Repositories;
 
+/// <summary>
+/// Persists valid ingestion records temporarily so resume can fall back to
+/// DynamoDB when a Parquet working file is unavailable or unreadable.
+/// Parquet creation and reading are owned by IngestionService to keep the
+/// behavior identical for DynamoDB and JSON persistence providers.
+/// </summary>
 public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 {
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
-    private readonly IIngestionJobAuditRepository _jobAuditRepository;
-    private readonly IIngestionWorkingFileStrategy _workingFileStrategy;
-    private readonly IngestionProcessingOptions _processingOptions;
     private readonly ILogger<DynamoDbIngestionStagingRepository> _logger;
 
     private const int BatchWriteLimit = 25;
@@ -27,18 +27,11 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
     public DynamoDbIngestionStagingRepository(
         IAmazonDynamoDB dynamoDb,
         IOptions<DynamoDbOptions> options,
-        IStorageService storage,
-        IIngestionJobAuditRepository jobAuditRepository,
-        IOptions<IngestionProcessingOptions> processingOptions,
-        ILogger<DynamoDbIngestionStagingRepository> logger,
-        ILogger<ParquetIngestionWorkingFileStrategy> parquetLogger)
+        ILogger<DynamoDbIngestionStagingRepository> logger)
     {
         _dynamoDb = dynamoDb;
         _tableName = options.Value.StagedFindingsTableName;
-        _jobAuditRepository = jobAuditRepository;
-        _processingOptions = processingOptions.Value;
         _logger = logger;
-        _workingFileStrategy = new ParquetIngestionWorkingFileStrategy(storage, processingOptions, parquetLogger);
     }
 
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
@@ -46,7 +39,8 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         if (string.IsNullOrWhiteSpace(jobId))
             throw new ArgumentException("JobId is required.", nameof(jobId));
 
-        if (validFindings == null || validFindings.Count == 0) return;
+        if (validFindings == null || validFindings.Count == 0)
+            return;
 
         _logger.LogInformation(
             "[STAGING_SAVE_START] JobId:{JobId}, Records:{Records}, BatchWriteLimit:{BatchWriteLimit}",
@@ -63,7 +57,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         foreach (var chunk in validFindings.Chunk(BatchWriteLimit))
         {
             chunkNumber++;
-            var writeRequests = new List<WriteRequest>();
+            var writeRequests = new List<WriteRequest>(chunk.Length);
 
             foreach (var finding in chunk)
             {
@@ -88,8 +82,6 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                 totalInputCount: validFindings.Count);
         }
 
-        WriteParquetWorkingFile(jobId, validFindings);
-
         _logger.LogInformation(
             "[STAGING_SAVE_COMPLETE] JobId:{JobId}, Records:{Records}, Chunks:{Chunks}",
             jobId,
@@ -99,11 +91,8 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
     public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
     {
-        if (string.IsNullOrWhiteSpace(jobId)) return new List<FileFinding>();
-
-        var parquetRecords = TryReadFromParquet(jobId, lastProcessedRecordCount);
-        if (parquetRecords != null)
-            return parquetRecords;
+        if (string.IsNullOrWhiteSpace(jobId))
+            return new List<FileFinding>();
 
         _logger.LogInformation(
             "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
@@ -148,7 +137,8 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 
     public int CountByJobId(string jobId)
     {
-        if (string.IsNullOrWhiteSpace(jobId)) return 0;
+        if (string.IsNullOrWhiteSpace(jobId))
+            return 0;
 
         var response = _dynamoDb.QueryAsync(new QueryRequest
         {
@@ -161,17 +151,13 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             Select = Select.COUNT
         }).GetAwaiter().GetResult();
 
-        var stagingCount = response.Count ?? 0;
-        if (stagingCount > 0 || !_processingOptions.EnableParquetWorkingFile)
-            return stagingCount;
-
-        var audit = _jobAuditRepository.GetByJobId(jobId);
-        return IsParquetAvailable(audit) ? audit!.WorkingFileRecordCount : 0;
+        return response.Count ?? 0;
     }
 
     public void DeleteByJobId(string jobId)
     {
-        if (string.IsNullOrWhiteSpace(jobId)) return;
+        if (string.IsNullOrWhiteSpace(jobId))
+            return;
 
         var keysToDelete = new List<Dictionary<string, AttributeValue>>();
         Dictionary<string, AttributeValue>? lastKey = null;
@@ -195,7 +181,8 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         }
         while (lastKey != null);
 
-        if (keysToDelete.Count == 0) return;
+        if (keysToDelete.Count == 0)
+            return;
 
         _logger.LogInformation(
             "[STAGING_DELETE_START] JobId:{JobId}, Records:{Records}",
@@ -223,70 +210,6 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             jobId,
             keysToDelete.Count,
             chunkNumber);
-    }
-
-    private void WriteParquetWorkingFile(string jobId, List<FileFinding> validFindings)
-    {
-        if (!_processingOptions.EnableParquetWorkingFile) return;
-
-        var audit = _jobAuditRepository.GetByJobId(jobId);
-        if (audit == null)
-        {
-            _logger.LogWarning("[PARQUET_WRITE_SKIPPED] JobId:{JobId}, Reason:Job audit not found.", jobId);
-            return;
-        }
-
-        _logger.LogInformation(
-            "[PARQUET_STAGING_WRITE_START] JobId:{JobId}, InboundFileName:{InboundFileName}, Records:{Records}",
-            jobId, audit.InboundFileName, validFindings.Count);
-
-        var result = _workingFileStrategy
-            .WriteAsync(jobId, audit.InboundFileName, validFindings)
-            .GetAwaiter()
-            .GetResult();
-
-        audit.WorkingFileFormat = result.Format;
-        audit.WorkingFilePath = result.Path;
-        audit.WorkingFileRecordCount = result.RecordCount;
-        _jobAuditRepository.Update(audit);
-
-        _logger.LogInformation(
-            "[PARQUET_STAGING_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}",
-            jobId, result.Path, result.RecordCount);
-    }
-
-    private List<FileFinding>? TryReadFromParquet(string jobId, int lastProcessedRecordCount)
-    {
-        if (!_processingOptions.EnableParquetWorkingFile) return null;
-
-        var audit = _jobAuditRepository.GetByJobId(jobId);
-        if (!IsParquetAvailable(audit)) return null;
-
-        try
-        {
-            _logger.LogInformation(
-                "[PARQUET_RESUME_READ_ATTEMPT] JobId:{JobId}, Path:{Path}, LastProcessedRecordCount:{LastProcessedRecordCount}",
-                jobId, audit!.WorkingFilePath, lastProcessedRecordCount);
-
-            var records = _workingFileStrategy
-                .ReadAfterAsync(audit.WorkingFilePath!, lastProcessedRecordCount)
-                .GetAwaiter()
-                .GetResult();
-
-            if (records.Count > 0 || lastProcessedRecordCount >= audit.WorkingFileRecordCount)
-            {
-                _logger.LogInformation("[PARQUET_RESUME_READ_SUCCESS] JobId:{JobId}, Records:{Records}", jobId, records.Count);
-                return records;
-            }
-
-            _logger.LogWarning("[PARQUET_RESUME_EMPTY_FALLBACK] JobId:{JobId}, Path:{Path}", jobId, audit.WorkingFilePath);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[PARQUET_RESUME_READ_FAILED] JobId:{JobId}. Falling back to staging.", jobId);
-            return null;
-        }
     }
 
     private void ExecuteBatchWriteWithRetry(
@@ -357,10 +280,4 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             remaining = new BatchWriteItemRequest { RequestItems = response.UnprocessedItems };
         }
     }
-
-    private static bool IsParquetAvailable(IngestionJobAudit? audit)
-        => audit != null
-           && string.Equals(audit.WorkingFileFormat, "Parquet", StringComparison.OrdinalIgnoreCase)
-           && !string.IsNullOrWhiteSpace(audit.WorkingFilePath)
-           && audit.WorkingFileRecordCount > 0;
 }

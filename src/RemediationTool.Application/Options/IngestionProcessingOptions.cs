@@ -18,7 +18,16 @@ public class IngestionProcessingOptions
 
     public bool EnableParquetWorkingFile { get; set; } = true;
 
-    public int ParquetRowGroupSize { get; set; } = 10000;
+    /// <summary>
+    /// Number of rows written to each Parquet row group. Larger row groups provide
+    /// better compression and scan performance for high-volume ingestion datasets.
+    /// </summary>
+    public int ParquetRowGroupSize { get; set; } = 50000;
+
+    /// <summary>
+    /// Buffer used by StreamReader while parsing CSV uploads.
+    /// </summary>
+    public int CsvReaderBufferSize { get; set; } = 65536;
 
     /// <summary>
     /// Maximum inbound CSV/XLSX upload size in MB.

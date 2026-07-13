@@ -1,5 +1,4 @@
 using RemediationTool.Domain.Enum;
-using System.Text.Json.Serialization;
 
 namespace RemediationTool.Application.Models;
 
@@ -65,13 +64,6 @@ public class IngestionUploadResponse
     public int PayloadRecordCount { get; set; }
 
     public int ValidationFailureCount { get; set; }
-
-    /// <summary>
-    /// Internal collection used for rejected-row persistence and processing-summary generation.
-    /// Rejected row details are intentionally excluded from the ingestion API response.
-    /// </summary>
-    [JsonIgnore]
-    public List<RejectedRowSummary> RejectedRows { get; set; } = new();
 
     // ── Finding type breakdown — drives dashboard stat cards ──────────────────
 
