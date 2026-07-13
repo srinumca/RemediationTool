@@ -13,6 +13,21 @@ namespace RemediationTool.Application.Services;
 /// </summary>
 public class ReportService
 {
+    private static readonly IReadOnlyDictionary<string, string> WorkflowTabAliases =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["notyetstarted"] = "NotYetStarted",
+            ["inprogress"] = "InProgress",
+            ["quarantined"] = "Quarantined",
+            ["restoration"] = "Restoration",
+            ["restore"] = "Restoration",
+            ["exceptions"] = "Exceptions",
+            ["exception"] = "Exceptions",
+            ["errors"] = "Errors",
+            ["error"] = "Errors",
+            ["deleted"] = "Deleted"
+        };
+
     private readonly IFileFindingRepository _repository;
 
     public ReportService(IFileFindingRepository repository)
@@ -22,9 +37,13 @@ public class ReportService
 
     public List<FileReportDto> GetAll()
     {
-        return _repository.GetAll()
-            .Select(ToDto)
-            .ToList();
+        var findings = _repository.GetAll();
+        var result = new List<FileReportDto>(findings.Count);
+
+        foreach (var finding in findings)
+            result.Add(ToDto(finding));
+
+        return result;
     }
 
     public List<FileReportDto> GetByStatus(string status)
@@ -32,50 +51,62 @@ public class ReportService
         if (!Enum.TryParse<FileStatus>(status, ignoreCase: true, out var parsedStatus))
             return new List<FileReportDto>();
 
-        return _repository.GetAll()
-            .Where(x => x.Status == parsedStatus)
-            .Select(ToDto)
-            .ToList();
+        var findings = _repository.GetAll();
+        var result = new List<FileReportDto>();
+
+        foreach (var finding in findings)
+        {
+            if (finding.Status == parsedStatus)
+                result.Add(ToDto(finding));
+        }
+
+        return result;
     }
 
     public List<FileReportDto> GetByFindingType(string findingType)
     {
-        return _repository.GetLatestByFindingType(findingType)
-            .Select(ToDto)
-            .ToList();
+        var findings = _repository.GetLatestByFindingType(findingType);
+        var result = new List<FileReportDto>(findings.Count);
+
+        foreach (var finding in findings)
+            result.Add(ToDto(finding));
+
+        return result;
     }
 
     public object GetSummary()
     {
         var findings = _repository.GetAll();
-        var counts = findings
-            .GroupBy(x => x.FindingType ?? string.Empty)
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        var byFindingType = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var byStatus = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var finding in findings)
+        {
+            Increment(byFindingType, finding.FindingType ?? string.Empty);
+            Increment(byStatus, finding.Status.ToString());
+        }
 
         return new
         {
             Total = findings.Count,
-            ByFindingType = counts,
-            ByStatus = findings
-                .GroupBy(x => x.Status.ToString())
-                .ToDictionary(g => g.Key, g => g.Count())
+            ByFindingType = byFindingType,
+            ByStatus = byStatus
         };
     }
 
     public DashboardSummaryDto GetDashboardSummary()
     {
         var findings = _repository.GetAll();
-        var byStatus = findings
-            .GroupBy(x => x.Status.ToString())
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        var byStatus = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var byFindingType = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var byTab = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        var byFindingType = findings
-            .GroupBy(x => x.FindingType ?? string.Empty)
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-
-        var byTab = findings
-            .GroupBy(ResolveWorkflowTab)
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        foreach (var finding in findings)
+        {
+            Increment(byStatus, finding.Status.ToString());
+            Increment(byFindingType, finding.FindingType ?? string.Empty);
+            Increment(byTab, ResolveWorkflowTab(finding));
+        }
 
         byTab.TryGetValue("NotYetStarted", out var notYetStarted);
         byTab.TryGetValue("InProgress", out var inProgress);
@@ -106,54 +137,95 @@ public class ReportService
             return new List<FileReportDto>();
 
         var normalizedTab = NormalizeTab(tab);
+        var findings = _repository.GetAll();
+        var result = new List<FileReportDto>();
 
-        return _repository.GetAll()
-            .Where(x => string.Equals(ResolveWorkflowTab(x), normalizedTab, StringComparison.OrdinalIgnoreCase))
-            .Select(ToDto)
-            .ToList();
+        foreach (var finding in findings)
+        {
+            if (string.Equals(
+                    ResolveWorkflowTab(finding),
+                    normalizedTab,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(ToDto(finding));
+            }
+        }
+
+        return result;
     }
 
     public byte[] ExportCsv(string? tab = null, string? status = null, string? findingType = null)
     {
-        IEnumerable<FileFinding> query = _repository.GetAll();
+        var findings = _repository.GetAll();
+        var normalizedTab = string.IsNullOrWhiteSpace(tab) ? null : NormalizeTab(tab);
+        var hasStatusFilter = !string.IsNullOrWhiteSpace(status)
+                              && Enum.TryParse<FileStatus>(status, ignoreCase: true, out var parsedStatus);
 
-        if (!string.IsNullOrWhiteSpace(tab))
-        {
-            var normalizedTab = NormalizeTab(tab);
-            query = query.Where(x => string.Equals(ResolveWorkflowTab(x), normalizedTab, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<FileStatus>(status, ignoreCase: true, out var parsedStatus))
-            query = query.Where(x => x.Status == parsedStatus);
-
-        if (!string.IsNullOrWhiteSpace(findingType))
-            query = query.Where(x => string.Equals(x.FindingType, findingType, StringComparison.OrdinalIgnoreCase));
-
-        var rows = query.Select(ToDto).ToList();
-        var csv = new StringBuilder();
+        var estimatedCapacity = Math.Min(1_048_576, Math.Max(1024, findings.Count * 128));
+        var csv = new StringBuilder(estimatedCapacity);
         csv.AppendLine("FileName,FindingType,Status,CurrentFileLocation,OriginalFileLocation,QuarantineDateUtc,RestorationDateUtc,DeletionDateUtc,DataSystem,SiteOwner,FileOwner,LastModifiedDate,QuarantinePath");
 
-        foreach (var row in rows)
+        foreach (var finding in findings)
         {
-            csv.AppendLine(string.Join(",", new[]
+            if (normalizedTab != null
+                && !string.Equals(
+                    ResolveWorkflowTab(finding),
+                    normalizedTab,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                Escape(row.FileName),
-                Escape(row.FindingType),
-                Escape(row.Status.ToString()),
-                Escape(row.CurrentFileLocation),
-                Escape(row.OriginalFileLocation),
-                Escape(row.QuarantineDateUtc?.ToString("O", CultureInfo.InvariantCulture)),
-                Escape(row.RestorationDateUtc?.ToString("O", CultureInfo.InvariantCulture)),
-                Escape(row.DeletionDateUtc?.ToString("O", CultureInfo.InvariantCulture)),
-                Escape(row.DataSystem),
-                Escape(row.SiteOwner),
-                Escape(row.FileOwner),
-                Escape(row.LastModifiedDate == DateTime.MinValue ? string.Empty : row.LastModifiedDate.ToString("O", CultureInfo.InvariantCulture)),
-                Escape(row.QuarantinePath)
-            }));
+                continue;
+            }
+
+            if (hasStatusFilter && finding.Status != parsedStatus)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(findingType)
+                && !string.Equals(finding.FindingType, findingType, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            AppendCsvValue(csv, finding.FileName);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.FindingType);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.Status.ToString());
+            csv.Append(',');
+            AppendCsvValue(csv, finding.CurrentFileLocation);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.OriginalFileLocation);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.QuarantineDateUtc?.ToString("O", CultureInfo.InvariantCulture));
+            csv.Append(',');
+            AppendCsvValue(csv, finding.RestoredDateUtc?.ToString("O", CultureInfo.InvariantCulture));
+            csv.Append(',');
+            AppendCsvValue(csv, finding.DeletedDateUtc?.ToString("O", CultureInfo.InvariantCulture));
+            csv.Append(',');
+            AppendCsvValue(csv, finding.OriginatingDataSystem);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.SiteOwner);
+            csv.Append(',');
+            AppendCsvValue(csv, finding.FileOwner);
+            csv.Append(',');
+            AppendCsvValue(
+                csv,
+                finding.LastModifiedDate == DateTime.MinValue
+                    ? string.Empty
+                    : finding.LastModifiedDate.ToString("O", CultureInfo.InvariantCulture));
+            csv.Append(',');
+            AppendCsvValue(csv, finding.QuarantinePath);
+            csv.AppendLine();
         }
 
         return Encoding.UTF8.GetBytes(csv.ToString());
+    }
+
+    private static void Increment(Dictionary<string, int> counts, string key)
+    {
+        if (counts.TryGetValue(key, out var currentCount))
+            counts[key] = currentCount + 1;
+        else
+            counts[key] = 1;
     }
 
     private static string ResolveWorkflowTab(FileFinding finding)
@@ -181,50 +253,70 @@ public class ReportService
 
     private static string NormalizeTab(string tab)
     {
-        var normalized = tab.Trim().Replace(" ", string.Empty).Replace("-", string.Empty).Replace("_", string.Empty);
+        Span<char> buffer = tab.Length <= 256
+            ? stackalloc char[tab.Length]
+            : new char[tab.Length];
 
-        return normalized.ToLowerInvariant() switch
+        var length = 0;
+        foreach (var character in tab.Trim())
         {
-            "notyetstarted" => "NotYetStarted",
-            "inprogress" => "InProgress",
-            "quarantined" => "Quarantined",
-            "restoration" => "Restoration",
-            "restore" => "Restoration",
-            "exceptions" => "Exceptions",
-            "exception" => "Exceptions",
-            "errors" => "Errors",
-            "error" => "Errors",
-            "deleted" => "Deleted",
-            _ => normalized
-        };
+            if (character is ' ' or '-' or '_')
+                continue;
+
+            buffer[length++] = character;
+        }
+
+        var normalized = new string(buffer[..length]);
+        return WorkflowTabAliases.TryGetValue(normalized, out var mappedTab)
+            ? mappedTab
+            : normalized;
     }
 
-    private static string Escape(string? value)
+    private static void AppendCsvValue(StringBuilder csv, string? value)
     {
         if (string.IsNullOrEmpty(value))
-            return string.Empty;
+            return;
 
-        var escaped = value.Replace("\"", "\"\"");
-        return escaped.Contains(',') || escaped.Contains('\n') || escaped.Contains('\r') || escaped.Contains('"')
-            ? $"\"{escaped}\""
-            : escaped;
+        var requiresQuotes = false;
+        foreach (var character in value)
+        {
+            if (character is ',' or '\n' or '\r' or '"')
+            {
+                requiresQuotes = true;
+                break;
+            }
+        }
+
+        if (requiresQuotes)
+            csv.Append('"');
+
+        foreach (var character in value)
+        {
+            if (character == '"')
+                csv.Append("\"\"");
+            else
+                csv.Append(character);
+        }
+
+        if (requiresQuotes)
+            csv.Append('"');
     }
 
-    private static FileReportDto ToDto(FileFinding x) => new()
+    private static FileReportDto ToDto(FileFinding finding) => new()
     {
-        FindingFileName = x.FindingFileName,
-        FindingType = x.FindingType,
-        CurrentFileLocation = x.CurrentFileLocation,
-        OriginalFileLocation = x.OriginalFileLocation,
-        QuarantineDateUtc = x.QuarantineDateUtc,
-        RestorationDateUtc = x.RestoredDateUtc,
-        DeletionDateUtc = x.DeletedDateUtc,
-        DataSystem = x.OriginatingDataSystem,
-        SiteOwner = x.SiteOwner,
-        FileOwner = x.FileOwner,
-        Status = x.Status,
-        LastModifiedDate = x.LastModifiedDate,
-        QuarantinePath = x.QuarantinePath,
-        FileName = x.FileName,
+        FindingFileName = finding.FindingFileName,
+        FindingType = finding.FindingType,
+        CurrentFileLocation = finding.CurrentFileLocation,
+        OriginalFileLocation = finding.OriginalFileLocation,
+        QuarantineDateUtc = finding.QuarantineDateUtc,
+        RestorationDateUtc = finding.RestoredDateUtc,
+        DeletionDateUtc = finding.DeletedDateUtc,
+        DataSystem = finding.OriginatingDataSystem,
+        SiteOwner = finding.SiteOwner,
+        FileOwner = finding.FileOwner,
+        Status = finding.Status,
+        LastModifiedDate = finding.LastModifiedDate,
+        QuarantinePath = finding.QuarantinePath,
+        FileName = finding.FileName
     };
 }
