@@ -13,17 +13,46 @@ internal readonly record struct IngestionResumeStoreResult(
 /// </summary>
 internal static class IngestionResumeStoreCoordinator
 {
-    public static async Task<IngestionResumeStoreResult> PrepareAsync(
+    /// <summary>
+    /// Compatibility overload for existing synchronous staging callers and tests.
+    /// </summary>
+    public static Task<IngestionResumeStoreResult> PrepareAsync(
         IngestionProcessingOptions options,
         int validRecordCount,
         Func<Task> createParquetAsync,
         Action writeStaging,
         Action clearParquetMetadata)
     {
-        ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createParquetAsync);
         ArgumentNullException.ThrowIfNull(writeStaging);
+
+        return PrepareAsync(
+            options,
+            validRecordCount,
+            _ => createParquetAsync(),
+            _ =>
+            {
+                writeStaging();
+                return Task.CompletedTask;
+            },
+            clearParquetMetadata,
+            CancellationToken.None);
+    }
+
+    public static async Task<IngestionResumeStoreResult> PrepareAsync(
+        IngestionProcessingOptions options,
+        int validRecordCount,
+        Func<CancellationToken, Task> createParquetAsync,
+        Func<CancellationToken, Task> writeStagingAsync,
+        Action clearParquetMetadata,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(createParquetAsync);
+        ArgumentNullException.ThrowIfNull(writeStagingAsync);
         ArgumentNullException.ThrowIfNull(clearParquetMetadata);
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (validRecordCount <= 0)
             return new IngestionResumeStoreResult(false, false, null);
@@ -35,8 +64,12 @@ internal static class IngestionResumeStoreCoordinator
         {
             try
             {
-                await createParquetAsync();
+                await createParquetAsync(cancellationToken);
                 parquetReady = true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -53,7 +86,7 @@ internal static class IngestionResumeStoreCoordinator
 
         if (!options.UseParquetAsPrimaryResumeStore)
         {
-            writeStaging();
+            await writeStagingAsync(cancellationToken);
             return new IngestionResumeStoreResult(parquetReady, true, parquetFailure);
         }
 
@@ -67,7 +100,7 @@ internal static class IngestionResumeStoreCoordinator
                 parquetFailure);
         }
 
-        writeStaging();
+        await writeStagingAsync(cancellationToken);
         return new IngestionResumeStoreResult(false, true, parquetFailure);
     }
 }
