@@ -54,7 +54,7 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             validFindings.Select(ToParquetRow),
             parquetStream,
             parquetOptions,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         parquetStream.Position = 0;
         await _storage.UploadAsync(workingFilePath, parquetStream);
