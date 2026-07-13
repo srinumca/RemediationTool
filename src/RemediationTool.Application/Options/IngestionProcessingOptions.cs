@@ -24,16 +24,7 @@ public class IngestionProcessingOptions
     public bool EnableParquetWorkingFile { get; set; } = true;
 
     /// <summary>
-    /// When false, a successful Parquet working file is the primary recovery source
-    /// and valid rows are not duplicated into the staging table. Staging is still
-    /// created automatically if processing fails after parsing, preserving a second
-    /// resume path without paying the normal successful-ingestion write/delete cost.
-    /// </summary>
-    public bool PersistStagingWhenParquetAvailable { get; set; }
-
-    /// <summary>
-    /// Confirms that the uploaded working file exists and its reported record count
-    /// matches the validated input before final findings are persisted.
+    /// Confirms that the uploaded working file exists before final findings are persisted.
     /// </summary>
     public bool ValidateWorkingFileAfterWrite { get; set; } = true;
 
