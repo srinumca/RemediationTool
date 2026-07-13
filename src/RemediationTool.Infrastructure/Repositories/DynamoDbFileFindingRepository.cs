@@ -15,9 +15,11 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
 {
     private const int BatchLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
+    private const int MaximumSupportedBatchWriteConcurrency = 16;
 
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
+    private readonly int _maxBatchWriteConcurrency;
     private readonly ILogger<DynamoDbFileFindingRepository> _logger;
 
     public DynamoDbFileFindingRepository(
@@ -27,6 +29,10 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
     {
         _dynamoDb = dynamoDb;
         _tableName = options.Value.FindingsTableName;
+        _maxBatchWriteConcurrency = Math.Clamp(
+            options.Value.MaxBatchWriteConcurrency,
+            1,
+            MaximumSupportedBatchWriteConcurrency);
         _logger = logger;
     }
 
@@ -38,29 +44,48 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         if (findings == null || findings.Count == 0)
             return;
 
-        var chunkNumber = 0;
-        foreach (var chunk in findings.Chunk(BatchLimit))
+        var batches = findings
+            .Chunk(BatchLimit)
+            .Select((chunk, index) => new BatchWriteWorkItem(
+                index + 1,
+                BuildPutRequests(chunk)))
+            .ToArray();
+
+        _logger.LogInformation(
+            "[DYNAMODB_BATCH_WRITE_START] Operation:{Operation}, Table:{Table}, TotalInputCount:{TotalInputCount}, BatchCount:{BatchCount}, MaxConcurrency:{MaxConcurrency}",
+            "FindingsBatchWrite",
+            _tableName,
+            findings.Count,
+            batches.Length,
+            _maxBatchWriteConcurrency);
+
+        try
         {
-            chunkNumber++;
-            var requests = new List<WriteRequest>(chunk.Length);
-
-            foreach (var finding in chunk)
-            {
-                requests.Add(new WriteRequest
+            Parallel.ForEach(
+                batches,
+                new ParallelOptions
                 {
-                    PutRequest = new PutRequest
-                    {
-                        Item = DynamoDbAttributeMap.ToMap(finding)
-                    }
-                });
-            }
-
-            ExecuteBatchWriteWithRetry(
-                requests,
-                operationName: "FindingsBatchWrite",
-                chunkNumber,
-                totalInputCount: findings.Count);
+                    MaxDegreeOfParallelism = _maxBatchWriteConcurrency
+                },
+                batch => ExecuteBatchWriteWithRetry(
+                    batch.Requests,
+                    operationName: "FindingsBatchWrite",
+                    batch.ChunkNumber,
+                    totalInputCount: findings.Count));
         }
+        catch (AggregateException ex)
+        {
+            throw new InvalidOperationException(
+                $"Findings batch persistence failed for table {_tableName}. All successful writes remain idempotent and the application checkpoint will retry the complete outer batch.",
+                ex.Flatten());
+        }
+
+        _logger.LogInformation(
+            "[DYNAMODB_BATCH_WRITE_ALL_COMPLETE] Operation:{Operation}, Table:{Table}, TotalInputCount:{TotalInputCount}, BatchCount:{BatchCount}",
+            "FindingsBatchWrite",
+            _tableName,
+            findings.Count,
+            batches.Length);
     }
 
     public void Update(FileFinding finding)
@@ -496,6 +521,23 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         return findings;
     }
 
+    private static List<WriteRequest> BuildPutRequests(FileFinding[] findings)
+    {
+        var requests = new List<WriteRequest>(findings.Length);
+        foreach (var finding in findings)
+        {
+            requests.Add(new WriteRequest
+            {
+                PutRequest = new PutRequest
+                {
+                    Item = DynamoDbAttributeMap.ToMap(finding)
+                }
+            });
+        }
+
+        return requests;
+    }
+
     private static void AddMappedFindings(
         List<FileFinding> destination,
         List<Dictionary<string, AttributeValue>> items)
@@ -518,4 +560,8 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         return message.Contains("does not have the specified index", StringComparison.OrdinalIgnoreCase)
                || message.Contains("specified index", StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed record BatchWriteWorkItem(
+        int ChunkNumber,
+        List<WriteRequest> Requests);
 }
