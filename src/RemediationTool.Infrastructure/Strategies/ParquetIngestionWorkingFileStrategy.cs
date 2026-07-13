@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Parquet;
 using Parquet.Serialization;
 using RemediationTool.Application.Constants;
 using RemediationTool.Application.Interfaces;
@@ -39,27 +40,34 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
 
         var workingFilePath = IngestionWorkingFilePathBuilder.BuildParquetPath(jobId, inboundFileName, DateTime.UtcNow);
         var rowGroupSize = Math.Max(1, _options.ParquetRowGroupSize);
-        var rows = validFindings.Select(ToParquetRow).ToList();
+        var parquetOptions = new ParquetOptions { RowGroupSize = rowGroupSize };
 
         _logger.LogInformation(
-            "[PARQUET_WRITE_START] JobId:{JobId}, Path:{Path}, Records:{Records}, ConfiguredRowGroupSize:{RowGroupSize}",
-            jobId, workingFilePath, rows.Count, rowGroupSize);
+            "[PARQUET_WRITE_START] JobId:{JobId}, Path:{Path}, Records:{Records}, RowGroupSize:{RowGroupSize}",
+            jobId, workingFilePath, validFindings.Count, rowGroupSize);
 
         await using var parquetStream = new MemoryStream();
-        await ParquetSerializer.SerializeAsync(rows, parquetStream, cancellationToken: cancellationToken);
+
+        // Keep row conversion lazy so the ingestion list is not duplicated by an
+        // additional List<ParquetFindingRow> before serialization.
+        await ParquetSerializer.SerializeAsync(
+            validFindings.Select(ToParquetRow),
+            parquetStream,
+            parquetOptions,
+            cancellationToken);
 
         parquetStream.Position = 0;
         await _storage.UploadAsync(workingFilePath, parquetStream);
 
         _logger.LogInformation(
-            "[PARQUET_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}",
-            jobId, workingFilePath, rows.Count);
+            "[PARQUET_WRITE_COMPLETE] JobId:{JobId}, Path:{Path}, Records:{Records}, Bytes:{Bytes}",
+            jobId, workingFilePath, validFindings.Count, parquetStream.Length);
 
         return new IngestionWorkingFileResult
         {
             Format = Format,
             Path = workingFilePath,
-            RecordCount = rows.Count
+            RecordCount = validFindings.Count
         };
     }
 
@@ -87,8 +95,18 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             cancellationToken: cancellationToken);
 
         var rows = ExtractRows(deserializationResult);
-        var remainingRows = rows.Skip(lastProcessedRecordCount).ToList();
-        var findings = remainingRows.Select(ToFileFinding).ToList();
+        if (lastProcessedRecordCount >= rows.Count)
+        {
+            _logger.LogInformation(
+                "[PARQUET_RESUME_READ_COMPLETE] Path:{Path}, TotalRows:{TotalRows}, RemainingRecords:0",
+                workingFilePath, rows.Count);
+            return new List<FileFinding>();
+        }
+
+        var findings = rows
+            .Skip(lastProcessedRecordCount)
+            .Select(ToFileFinding)
+            .ToList();
 
         _logger.LogInformation(
             "[PARQUET_RESUME_READ_COMPLETE] Path:{Path}, TotalRows:{TotalRows}, RemainingRecords:{RemainingRecords}",
