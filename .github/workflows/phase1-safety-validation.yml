@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
 
+# One-run validation workflow; it removes itself after a successful commit.
 jobs:
   validate:
     if: github.actor != 'github-actions[bot]'
