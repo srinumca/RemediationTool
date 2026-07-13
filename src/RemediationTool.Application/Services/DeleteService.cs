@@ -38,15 +38,92 @@ public class DeleteService
 
     public async Task DeleteAsync(Guid id)
     {
-        _logger.LogInformation("[DELETE_START] FileId:{FileId}", id);
-
-        var file = _repository.GetAll().FirstOrDefault(x => x.Id == id);
-
+        var file = _repository.GetById(id);
         if (file == null)
         {
-            _logger.LogWarning("[DELETE_NOT_FOUND] FileId:{FileId}, Message:No matching record found.", id);
+            _logger.LogWarning(
+                "[DELETE_NOT_FOUND] FileId:{FileId}, Message:No matching record found.",
+                id);
             return;
         }
+
+        await DeleteFileAsync(file);
+    }
+
+    public async Task DeleteAllAsync()
+    {
+        var files = _repository.GetAll()
+            .Where(file => file.Status == FileStatus.QuarantineComplete)
+            .ToList();
+
+        _logger.LogInformation(
+            "[DELETE_ALL_START] Found {Count} file(s) eligible for deletion.",
+            files.Count);
+
+        var succeeded = 0;
+        var failed = 0;
+
+        foreach (var file in files)
+        {
+            var finalStatus = await DeleteFileAsync(file);
+            if (finalStatus == FileStatus.DeletionComplete)
+                succeeded++;
+            else if (finalStatus == FileStatus.Error)
+                failed++;
+        }
+
+        if (succeeded > 0 && failed > 0)
+        {
+            _logger.LogWarning(
+                "[DELETE_ALL_PARTIAL_FAILURE] Succeeded:{Succeeded}, Failed:{Failed}, ErrorCategory:{ErrorCategory}",
+                succeeded,
+                failed,
+                ErrorCategoryResolver.PartialDeleteFailure());
+        }
+
+        _logger.LogInformation(
+            "[DELETE_ALL_COMPLETE] Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}",
+            files.Count,
+            succeeded,
+            failed);
+    }
+
+    public async Task<int> DeleteRetentionEligibleAsync(DateTime? asOfUtc = null)
+    {
+        var cutoffUtc = (asOfUtc ?? DateTime.UtcNow)
+            .AddYears(-Math.Max(0, _options.RetentionYears));
+
+        var files = _repository.GetAll()
+            .Where(file =>
+                file.Status == FileStatus.QuarantineComplete
+                && file.QuarantineDateUtc.HasValue
+                && file.QuarantineDateUtc.Value <= cutoffUtc)
+            .ToList();
+
+        _logger.LogInformation(
+            "[DELETE_RETENTION_START] RetentionYears:{RetentionYears}, CutoffUtc:{CutoffUtc}, EligibleCount:{EligibleCount}",
+            _options.RetentionYears,
+            cutoffUtc,
+            files.Count);
+
+        var deletedCount = 0;
+        foreach (var file in files)
+        {
+            if (await DeleteFileAsync(file) == FileStatus.DeletionComplete)
+                deletedCount++;
+        }
+
+        _logger.LogInformation(
+            "[DELETE_RETENTION_COMPLETE] EligibleCount:{EligibleCount}, DeletedCount:{DeletedCount}",
+            files.Count,
+            deletedCount);
+
+        return deletedCount;
+    }
+
+    private async Task<FileStatus> DeleteFileAsync(FileFinding file)
+    {
+        _logger.LogInformation("[DELETE_START] FileId:{FileId}", file.Id);
 
         if (file.Status == FileStatus.DeletionComplete)
         {
@@ -57,23 +134,25 @@ public class DeleteService
 
             _logger.LogWarning(
                 "[DELETE_DUPLICATE] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Status:{Status}",
-                id,
+                file.Id,
                 file.SourceRecordId,
                 file.FileName,
                 file.Status);
-            return;
+
+            return file.Status;
         }
 
         if (file.Status != FileStatus.QuarantineComplete)
         {
             _logger.LogWarning(
                 "[DELETE_SKIPPED_INVALID_STATUS] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, CurrentStatus:{Status}, ExpectedStatus:{ExpectedStatus}",
-                id,
+                file.Id,
                 file.SourceRecordId,
                 file.FileName,
                 file.Status,
                 FileStatus.QuarantineComplete);
-            return;
+
+            return file.Status;
         }
 
         var quarantinePath = file.QuarantinePath;
@@ -99,10 +178,9 @@ public class DeleteService
                     file,
                     "Delete failed because quarantine path is missing.",
                     ErrorCategoryResolver.DeleteQuarantineFileMissing(),
-                    id,
                     "Quarantine path missing",
                     new { file.FileName, file.SourceRecordId });
-                return;
+                return file.Status;
             }
 
             if (!await _fileService.ExistsAsync(quarantinePath))
@@ -111,10 +189,9 @@ public class DeleteService
                     file,
                     $"Delete failed because quarantine file was not found: {quarantinePath}",
                     ErrorCategoryResolver.DeleteQuarantineFileMissing(),
-                    id,
                     "Quarantine file missing",
                     new { file.FileName, file.SourceRecordId, quarantinePath });
-                return;
+                return file.Status;
             }
 
             var previousStatus = file.Status;
@@ -130,11 +207,6 @@ public class DeleteService
                 previousStatus,
                 file.Status);
 
-            _logger.LogInformation(
-                "[DELETE_QUARANTINE_FILE_START] FileId:{FileId}, QuarantinePath:{QuarantinePath}",
-                file.Id,
-                quarantinePath);
-
             await _fileService.DeleteSourceAsync(quarantinePath);
 
             _logger.LogInformation(
@@ -144,11 +216,6 @@ public class DeleteService
 
             if (!string.IsNullOrWhiteSpace(stubPath))
             {
-                _logger.LogInformation(
-                    "[DELETE_STUB_EXISTS_CHECK_START] FileId:{FileId}, StubPath:{StubPath}",
-                    file.Id,
-                    stubPath);
-
                 if (await _fileService.ExistsAsync(stubPath))
                 {
                     await _fileService.DeleteSourceAsync(stubPath);
@@ -167,17 +234,18 @@ public class DeleteService
             }
 
             previousStatus = file.Status;
+            var deletedAtUtc = DateTime.UtcNow;
             file.Status = FileStatus.DeletionComplete;
-            file.DeletedDateUtc = DateTime.UtcNow;
+            file.DeletedDateUtc = deletedAtUtc;
             file.CurrentFileLocation = string.Empty;
             file.ErrorCategory = ErrorCategory.None.ToString();
             file.ErrorReason = string.Empty;
-            file.UpdatedDate = DateTime.UtcNow;
+            file.UpdatedDate = deletedAtUtc;
             _repository.Update(file);
 
             _logger.LogInformation(
                 "[DELETE_COMPLETE] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, PreviousStatus:{PreviousStatus}, NewStatus:{NewStatus}, DeletedDateUtc:{DeletedDateUtc}",
-                id,
+                file.Id,
                 file.SourceRecordId,
                 file.FileName,
                 previousStatus,
@@ -206,16 +274,16 @@ public class DeleteService
         catch (Exception ex)
         {
             var category = ErrorCategoryResolver.FromException(ex);
-
             file.Status = FileStatus.Error;
             file.ErrorReason = ex.Message;
             file.ErrorCategory = category.ToString();
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
-            _logger.LogError(ex,
+            _logger.LogError(
+                ex,
                 "[DELETE_FAILED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, ErrorCategory:{ErrorCategory}, Error:{Error}, QuarantinePath:{QuarantinePath}, StubPath:{StubPath}",
-                id,
+                file.Id,
                 file.SourceRecordId,
                 file.FileName,
                 category,
@@ -239,85 +307,14 @@ public class DeleteService
                     OriginalPath = originalPath
                 });
         }
-    }
 
-    public async Task DeleteAllAsync()
-    {
-        var files = _repository.GetAll()
-            .Where(x => x.Status == FileStatus.QuarantineComplete)
-            .ToList();
-
-        _logger.LogInformation("[DELETE_ALL_START] Found {Count} file(s) eligible for deletion.", files.Count);
-
-        var succeeded = 0;
-        var failed = 0;
-
-        foreach (var file in files)
-        {
-            await DeleteAsync(file.Id);
-
-            var updated = _repository.GetById(file.Id);
-            if (updated?.Status == FileStatus.DeletionComplete)
-                succeeded++;
-            else if (updated?.Status == FileStatus.Error)
-                failed++;
-        }
-
-        if (succeeded > 0 && failed > 0)
-        {
-            _logger.LogWarning(
-                "[DELETE_ALL_PARTIAL_FAILURE] Succeeded:{Succeeded}, Failed:{Failed}, ErrorCategory:{ErrorCategory}",
-                succeeded,
-                failed,
-                ErrorCategoryResolver.PartialDeleteFailure());
-        }
-
-        _logger.LogInformation(
-            "[DELETE_ALL_COMPLETE] Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}",
-            files.Count,
-            succeeded,
-            failed);
-    }
-
-    public async Task<int> DeleteRetentionEligibleAsync(DateTime? asOfUtc = null)
-    {
-        var cutoffUtc = (asOfUtc ?? DateTime.UtcNow).AddYears(-Math.Max(0, _options.RetentionYears));
-
-        var files = _repository.GetAll()
-            .Where(x => x.Status == FileStatus.QuarantineComplete)
-            .Where(x => x.QuarantineDateUtc.HasValue && x.QuarantineDateUtc.Value <= cutoffUtc)
-            .ToList();
-
-        _logger.LogInformation(
-            "[DELETE_RETENTION_START] RetentionYears:{RetentionYears}, CutoffUtc:{CutoffUtc}, EligibleCount:{EligibleCount}",
-            _options.RetentionYears,
-            cutoffUtc,
-            files.Count);
-
-        var deletedCount = 0;
-
-        foreach (var file in files)
-        {
-            await DeleteAsync(file.Id);
-
-            var updated = _repository.GetById(file.Id);
-            if (updated?.Status == FileStatus.DeletionComplete)
-                deletedCount++;
-        }
-
-        _logger.LogInformation(
-            "[DELETE_RETENTION_COMPLETE] EligibleCount:{EligibleCount}, DeletedCount:{DeletedCount}",
-            files.Count,
-            deletedCount);
-
-        return deletedCount;
+        return file.Status;
     }
 
     private void MarkFailed(
         FileFinding file,
         string errorReason,
         ErrorCategory errorCategory,
-        Guid id,
         string auditError,
         object auditDetails)
     {
@@ -329,7 +326,7 @@ public class DeleteService
 
         _logger.LogError(
             "[DELETE_FAILED] FileId:{FileId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, ErrorCategory:{ErrorCategory}, ErrorReason:{ErrorReason}",
-            id,
+            file.Id,
             file.SourceRecordId,
             file.FileName,
             errorCategory,

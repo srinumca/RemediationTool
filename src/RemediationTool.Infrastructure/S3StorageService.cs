@@ -1,18 +1,21 @@
-﻿using Amazon.S3;
+using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Logging;
+using System.Net;
 
 namespace RemediationTool.Infrastructure;
 
 public class S3StorageService : IStorageService
 {
     private readonly IAmazonS3 _s3Client;
-    private readonly IConfiguration _configuration;
     private readonly string _bucketName;
     private readonly ILogger<S3StorageService> _logger;
+    private readonly bool _useServerSideEncryption;
+    private readonly ServerSideEncryptionMethod _encryptionMethod;
+    private readonly string? _kmsKeyId;
 
     public S3StorageService(
         IAmazonS3 s3Client,
@@ -20,23 +23,42 @@ public class S3StorageService : IStorageService
         ILogger<S3StorageService> logger)
     {
         _s3Client = s3Client;
-        _configuration = configuration;
         _logger = logger;
         _bucketName = configuration["AWS:BucketName"]
             ?? throw new InvalidOperationException("AWS:BucketName configuration is missing.");
 
-        _logger.LogInformation("[S3 INIT] S3StorageService initialised. Bucket={Bucket}", _bucketName);
+        _useServerSideEncryption =
+            bool.TryParse(configuration["AWS:UseServerSideEncryption"], out var parsedEncryptionFlag)
+            && parsedEncryptionFlag;
+
+        var configuredMethod = configuration["AWS:ServerSideEncryptionMethod"] ?? "AES256";
+        _encryptionMethod = configuredMethod.Equals("aws:kms", StringComparison.OrdinalIgnoreCase)
+                            || configuredMethod.Equals("KMS", StringComparison.OrdinalIgnoreCase)
+            ? ServerSideEncryptionMethod.AWSKMS
+            : ServerSideEncryptionMethod.AES256;
+
+        _kmsKeyId = configuration["AWS:KmsKeyId"];
+
+        _logger.LogInformation(
+            "[S3 INIT] S3StorageService initialised. Bucket={Bucket} EncryptionEnabled={EncryptionEnabled} EncryptionMethod={EncryptionMethod}",
+            _bucketName,
+            _useServerSideEncryption,
+            _encryptionMethod);
     }
 
-    // ── UploadAsync ──────────────────────────────────────────────────────────
     public async Task UploadAsync(string key, Stream stream)
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
 
+        ArgumentNullException.ThrowIfNull(stream);
+
         var normalizedKey = NormalizeKey(key);
 
-        using var perf = new LogPerformanceScope(_logger, "S3 Upload", new { Bucket = _bucketName, Key = normalizedKey });
+        using var perf = new LogPerformanceScope(
+            _logger,
+            "S3 Upload",
+            new { Bucket = _bucketName, Key = normalizedKey });
 
         var request = new PutObjectRequest
         {
@@ -52,19 +74,22 @@ public class S3StorageService : IStorageService
             await _s3Client.PutObjectAsync(request);
             _logger.LogInformation(
                 "[S3 UPLOAD COMPLETE] Bucket={Bucket} Key={Key}",
-                _bucketName, normalizedKey);
+                _bucketName,
+                normalizedKey);
         }
         catch (Exception ex)
         {
             perf.MarkFailed();
-            _logger.LogError(ex,
+            _logger.LogError(
+                ex,
                 "[S3 UPLOAD FAILED] Bucket={Bucket} Key={Key} Error={Error}",
-                _bucketName, normalizedKey, ex.Message);
+                _bucketName,
+                normalizedKey,
+                ex.Message);
             throw;
         }
     }
 
-    // ── DownloadAsync ────────────────────────────────────────────────────────
     public async Task<Stream> DownloadAsync(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -73,46 +98,83 @@ public class S3StorageService : IStorageService
         var normalizedKey = NormalizeKey(key);
 
         using var perf = new LogPerformanceScope(
-            _logger, "S3 Download", new { Bucket = _bucketName, Key = normalizedKey },
+            _logger,
+            "S3 Download",
+            new { Bucket = _bucketName, Key = normalizedKey },
             slowThreshold: TimeSpan.FromMilliseconds(3000));
 
         try
         {
-            var response = await _s3Client.GetObjectAsync(new GetObjectRequest
+            using var response = await _s3Client.GetObjectAsync(new GetObjectRequest
             {
                 BucketName = _bucketName,
                 Key = normalizedKey
             });
 
-            var memoryStream = new MemoryStream();
+            var initialCapacity = response.ContentLength is > 0 and <= int.MaxValue
+                ? (int)response.ContentLength
+                : 0;
+
+            var memoryStream = initialCapacity > 0
+                ? new MemoryStream(initialCapacity)
+                : new MemoryStream();
+
             await response.ResponseStream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
 
             _logger.LogInformation(
                 "[S3 DOWNLOAD COMPLETE] Bucket={Bucket} Key={Key} SizeBytes={SizeBytes}",
-                _bucketName, normalizedKey, memoryStream.Length);
+                _bucketName,
+                normalizedKey,
+                memoryStream.Length);
 
             return memoryStream;
         }
-        catch (Amazon.S3.AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             perf.MarkFailed();
             _logger.LogWarning(
                 "[S3 DOWNLOAD NOT FOUND] Bucket={Bucket} Key={Key} — object does not exist.",
-                _bucketName, normalizedKey);
+                _bucketName,
+                normalizedKey);
             throw;
         }
         catch (Exception ex)
         {
             perf.MarkFailed();
-            _logger.LogError(ex,
+            _logger.LogError(
+                ex,
                 "[S3 DOWNLOAD FAILED] Bucket={Bucket} Key={Key} Error={Error}",
-                _bucketName, normalizedKey, ex.Message);
+                _bucketName,
+                normalizedKey,
+                ex.Message);
             throw;
         }
     }
 
-    // ── MoveAsync ────────────────────────────────────────────────────────────
+    public async Task<bool> ExistsAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        var normalizedKey = NormalizeKey(key);
+
+        try
+        {
+            await _s3Client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = _bucketName,
+                Key = normalizedKey
+            });
+
+            return true;
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
     public async Task MoveAsync(string sourceKey, string destinationKey)
     {
         if (string.IsNullOrWhiteSpace(sourceKey))
@@ -121,42 +183,54 @@ public class S3StorageService : IStorageService
         if (string.IsNullOrWhiteSpace(destinationKey))
             throw new ArgumentException("Destination key is required.", nameof(destinationKey));
 
-        var normSource = NormalizeKey(sourceKey);
-        var normDest = NormalizeKey(destinationKey);
+        var normalizedSource = NormalizeKey(sourceKey);
+        var normalizedDestination = NormalizeKey(destinationKey);
 
-        using var perf = new LogPerformanceScope(_logger, "S3 Move", new { Bucket = _bucketName, Source = normSource, Destination = normDest });
+        using var perf = new LogPerformanceScope(
+            _logger,
+            "S3 Move",
+            new
+            {
+                Bucket = _bucketName,
+                Source = normalizedSource,
+                Destination = normalizedDestination
+            });
 
         try
         {
             var copyRequest = new CopyObjectRequest
             {
                 SourceBucket = _bucketName,
-                SourceKey = normSource,
+                SourceKey = normalizedSource,
                 DestinationBucket = _bucketName,
-                DestinationKey = normDest
+                DestinationKey = normalizedDestination
             };
 
             ApplyServerSideEncryption(copyRequest);
 
             await _s3Client.CopyObjectAsync(copyRequest);
-
             await DeleteAsync(sourceKey);
 
             _logger.LogInformation(
                 "[S3 MOVE COMPLETE] Bucket={Bucket} Source={Source} Destination={Destination}",
-                _bucketName, normSource, normDest);
+                _bucketName,
+                normalizedSource,
+                normalizedDestination);
         }
         catch (Exception ex)
         {
             perf.MarkFailed();
-            _logger.LogError(ex,
+            _logger.LogError(
+                ex,
                 "[S3 MOVE FAILED] Bucket={Bucket} Source={Source} Destination={Destination} Error={Error}",
-                _bucketName, normSource, normDest, ex.Message);
+                _bucketName,
+                normalizedSource,
+                normalizedDestination,
+                ex.Message);
             throw;
         }
     }
 
-    // ── DeleteAsync ──────────────────────────────────────────────────────────
     public async Task DeleteAsync(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -164,97 +238,59 @@ public class S3StorageService : IStorageService
 
         var normalizedKey = NormalizeKey(key);
 
-        using var perf = new LogPerformanceScope(_logger, "S3 Delete", new { Bucket = _bucketName, Key = normalizedKey });
+        using var perf = new LogPerformanceScope(
+            _logger,
+            "S3 Delete",
+            new { Bucket = _bucketName, Key = normalizedKey });
 
         try
         {
             await _s3Client.DeleteObjectAsync(_bucketName, normalizedKey);
             _logger.LogInformation(
                 "[S3 DELETE] Bucket={Bucket} Key={Key} — deleted.",
-                _bucketName, normalizedKey);
+                _bucketName,
+                normalizedKey);
         }
         catch (Exception ex)
         {
             perf.MarkFailed();
-            _logger.LogError(ex,
+            _logger.LogError(
+                ex,
                 "[S3 DELETE FAILED] Bucket={Bucket} Key={Key} Error={Error}",
-                _bucketName, normalizedKey, ex.Message);
+                _bucketName,
+                normalizedKey,
+                ex.Message);
             throw;
         }
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
-    // These were present in the original S3StorageService.cs and are required
-    // by every public method above. If your build is reporting "NormalizeKey
-    // does not exist" or "ApplyServerSideEncryption does not exist", it means
-    // these two methods were dropped during a previous copy/paste. They are
-    // restored here exactly as they existed originally — no logic changes.
-
-    /// <summary>
-    /// Normalises a storage key by trimming any leading slash, since S3 keys
-    /// should never start with "/" (a leading slash creates a key with an
-    /// empty first path segment, which is valid in S3 but not what callers
-    /// intend when building paths like "2026/06/ING-.../file.csv").
-    /// </summary>
     private static string NormalizeKey(string key) => key.TrimStart('/');
 
-    /// <summary>
-    /// Applies server-side encryption settings to an S3 request based on
-    /// configuration. Supports either AES256 (S3-managed keys) or KMS
-    /// (customer-managed keys via AWS:KmsKeyId), controlled by
-    /// AWS:UseServerSideEncryption and AWS:ServerSideEncryptionMethod.
-    /// </summary>
     private void ApplyServerSideEncryption(PutObjectRequest request)
     {
-        // Reads via the IConfiguration indexer (string) + bool.TryParse instead
-        // of the GetValue<T>() extension method — GetValue<T>() lives in the
-        // Microsoft.Extensions.Configuration.Binder package, which may not be
-        // referenced in this project. The indexer approach needs nothing extra.
-        var useEncryption = bool.TryParse(_configuration["AWS:UseServerSideEncryption"], out var parsed) && parsed;
-        if (!useEncryption) return;
+        if (!_useServerSideEncryption)
+            return;
 
-        var method = _configuration["AWS:ServerSideEncryptionMethod"] ?? "AES256";
+        request.ServerSideEncryptionMethod = _encryptionMethod;
 
-        if (method.Equals("aws:kms", StringComparison.OrdinalIgnoreCase) ||
-            method.Equals("KMS", StringComparison.OrdinalIgnoreCase))
+        if (_encryptionMethod == ServerSideEncryptionMethod.AWSKMS
+            && !string.IsNullOrWhiteSpace(_kmsKeyId))
         {
-            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS;
-
-            var kmsKeyId = _configuration["AWS:KmsKeyId"];
-            if (!string.IsNullOrWhiteSpace(kmsKeyId))
-                request.ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId;
-        }
-        else
-        {
-            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AES256;
+            request.ServerSideEncryptionKeyManagementServiceKeyId = _kmsKeyId;
         }
     }
 
-    /// <summary>
-    /// Overload for CopyObjectRequest — S3 copy operations need encryption
-    /// re-applied on the destination object since encryption settings are
-    /// not automatically carried over during a copy.
-    /// </summary>
     private void ApplyServerSideEncryption(CopyObjectRequest request)
     {
-        // Same indexer + TryParse approach as the PutObjectRequest overload above.
-        var useEncryption = bool.TryParse(_configuration["AWS:UseServerSideEncryption"], out var parsed) && parsed;
-        if (!useEncryption) return;
+        if (!_useServerSideEncryption)
+            return;
 
-        var method = _configuration["AWS:ServerSideEncryptionMethod"] ?? "AES256";
+        request.ServerSideEncryptionMethod = _encryptionMethod;
 
-        if (method.Equals("aws:kms", StringComparison.OrdinalIgnoreCase) ||
-            method.Equals("KMS", StringComparison.OrdinalIgnoreCase))
+        if (_encryptionMethod == ServerSideEncryptionMethod.AWSKMS
+            && !string.IsNullOrWhiteSpace(_kmsKeyId))
         {
-            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AWSKMS;
-
-            var kmsKeyId = _configuration["AWS:KmsKeyId"];
-            if (!string.IsNullOrWhiteSpace(kmsKeyId))
-                request.ServerSideEncryptionKeyManagementServiceKeyId = kmsKeyId;
-        }
-        else
-        {
-            request.ServerSideEncryptionMethod = ServerSideEncryptionMethod.AES256;
+            request.ServerSideEncryptionKeyManagementServiceKeyId = _kmsKeyId;
         }
     }
 }

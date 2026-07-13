@@ -38,9 +38,6 @@ public class QuarantineService
         _options = options.Value;
     }
 
-    /// <summary>
-    /// Queues selected NotYetStarted obsolete records for quarantine and optionally processes them immediately.
-    /// </summary>
     public async Task<QuarantineBatchResult> QueueAsync(
         QuarantineRequest request,
         CancellationToken cancellationToken = default)
@@ -49,21 +46,32 @@ public class QuarantineService
 
         var result = CreateResult();
         var requestedBy = ResolveActor(request.RequestedBy);
-        var requestedIds = request.RecordIds?.Distinct().ToList() ?? new List<Guid>();
+        var requestedIds = request.RecordIds is { Count: > 0 }
+            ? request.RecordIds.Distinct().ToList()
+            : new List<Guid>();
 
         _logger.LogInformation(
             "[QUARANTINE_QUEUE_START] RunId:{RunId}, RequestedBy:{RequestedBy}, IncludeAllEligible:{IncludeAllEligible}, RequestedIds:{RequestedIdsCount}, ProcessImmediately:{ProcessImmediately}",
-            result.RunId, requestedBy, request.IncludeAllEligibleNotYetStarted, requestedIds.Count, request.ProcessImmediately);
+            result.RunId,
+            requestedBy,
+            request.IncludeAllEligibleNotYetStarted,
+            requestedIds.Count,
+            request.ProcessImmediately);
 
-        var candidateRecords = GetQueueCandidates(request.IncludeAllEligibleNotYetStarted, requestedIds);
-        result.RequestedCount = request.IncludeAllEligibleNotYetStarted ? candidateRecords.Count : requestedIds.Count;
+        var candidateRecords = GetQueueCandidates(
+            request.IncludeAllEligibleNotYetStarted,
+            requestedIds);
+
+        result.RequestedCount = request.IncludeAllEligibleNotYetStarted
+            ? candidateRecords.Count
+            : requestedIds.Count;
+
+        result.Items.EnsureCapacity(result.RequestedCount);
 
         if (!request.IncludeAllEligibleNotYetStarted)
-        {
-            AddMissingRecordResults(result, requestedIds, candidateRecords.Select(x => x.Id));
-        }
+            AddMissingRecordResults(result, requestedIds, candidateRecords);
 
-        var queuedIds = new List<Guid>();
+        var queuedIds = new List<Guid>(candidateRecords.Count);
 
         foreach (var file in candidateRecords)
         {
@@ -87,14 +95,26 @@ public class QuarantineService
 
             _logger.LogInformation(
                 "[QUARANTINE_QUEUED] RunId:{RunId}, RecordId:{RecordId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, PreviousStatus:{PreviousStatus}, NewStatus:{NewStatus}, RequestedBy:{RequestedBy}",
-                result.RunId, file.Id, file.SourceRecordId, file.FileName, previousStatus, file.Status, requestedBy);
+                result.RunId,
+                file.Id,
+                file.SourceRecordId,
+                file.FileName,
+                previousStatus,
+                file.Status,
+                requestedBy);
 
             _auditLogger.RecordEvent(
                 eventType: "FileQueuedForQuarantine",
                 entityId: file.Id.ToString(),
                 actor: requestedBy,
                 outcome: "Success",
-                details: new { file.FileName, file.SourceRecordId, PreviousStatus = previousStatus.ToString(), NewStatus = file.Status.ToString() });
+                details: new
+                {
+                    file.FileName,
+                    file.SourceRecordId,
+                    PreviousStatus = previousStatus.ToString(),
+                    NewStatus = file.Status.ToString()
+                });
 
             if (!request.ProcessImmediately)
             {
@@ -114,28 +134,43 @@ public class QuarantineService
 
         if (request.ProcessImmediately && queuedIds.Count > 0)
         {
-            var processResult = await ProcessPendingAsync(queuedIds, requestedBy, result.RunId, cancellationToken);
+            var processResult = await ProcessPendingAsync(
+                queuedIds,
+                requestedBy,
+                result.RunId,
+                cancellationToken);
+
             result.Items.AddRange(processResult.Items);
             result.ProcessedCount = processResult.ProcessedCount;
             result.SucceededCount = processResult.SucceededCount;
             result.FailedCount = processResult.FailedCount;
-            result.SkippedCount += processResult.SkippedCount;
         }
 
-        FinaliseResult(result, request.ProcessImmediately ? "Quarantine queue and processing completed." : "Quarantine queue completed.");
+        FinaliseResult(
+            result,
+            request.ProcessImmediately
+                ? "Quarantine queue and processing completed."
+                : "Quarantine queue completed.");
 
         _logger.LogInformation(
             "[QUARANTINE_QUEUE_COMPLETE] RunId:{RunId}, Requested:{Requested}, Queued:{Queued}, Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}, Skipped:{Skipped}",
-            result.RunId, result.RequestedCount, result.QueuedCount, result.ProcessedCount, result.SucceededCount, result.FailedCount, result.SkippedCount);
+            result.RunId,
+            result.RequestedCount,
+            result.QueuedCount,
+            result.ProcessedCount,
+            result.SucceededCount,
+            result.FailedCount,
+            result.SkippedCount);
 
         return result;
     }
 
-    /// <summary>
-    /// Processes all records currently in PendingQuarantine.
-    /// </summary>
     public Task<QuarantineBatchResult> ProcessAsync(CancellationToken cancellationToken = default)
-        => ProcessPendingAsync(recordIds: null, requestedBy: "System", runId: null, cancellationToken);
+        => ProcessPendingAsync(
+            recordIds: null,
+            requestedBy: "System",
+            runId: null,
+            cancellationToken);
 
     private async Task<QuarantineBatchResult> ProcessPendingAsync(
         IReadOnlyCollection<Guid>? recordIds,
@@ -146,32 +181,53 @@ public class QuarantineService
         var result = CreateResult(runId);
         requestedBy = ResolveActor(requestedBy);
 
+        var retentionCutoffUtc = _options.EnableRetentionCheck
+            ? DateTime.UtcNow.AddYears(-Math.Max(0, _options.RetentionYears))
+            : (DateTime?)null;
+
         _logger.LogInformation(
             "[QUARANTINE_RUN_START] RunId:{RunId}, RequestedBy:{RequestedBy}, FilteredRecordCount:{FilteredRecordCount}, RetentionYears:{RetentionYears}, MaxRetryAttempts:{MaxRetryAttempts}",
-            result.RunId, requestedBy, recordIds?.Count ?? 0, _options.RetentionYears, _options.MaxRetryAttempts);
+            result.RunId,
+            requestedBy,
+            recordIds?.Count ?? 0,
+            _options.RetentionYears,
+            _options.MaxRetryAttempts);
 
         var files = GetPendingQuarantineRecords(recordIds);
-
         result.RequestedCount = recordIds?.Count ?? files.Count;
         result.ProcessedCount = files.Count;
+        result.Items.EnsureCapacity(files.Count);
 
         foreach (var file in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var itemResult = await ProcessSingleAsync(file, requestedBy, result.RunId, cancellationToken);
+            var itemResult = await ProcessSingleAsync(
+                file,
+                requestedBy,
+                result.RunId,
+                retentionCutoffUtc,
+                cancellationToken);
+
             result.Items.Add(itemResult);
 
-            if (itemResult.Succeeded) result.SucceededCount++;
-            else if (itemResult.Skipped) result.SkippedCount++;
-            else result.FailedCount++;
+            if (itemResult.Succeeded)
+                result.SucceededCount++;
+            else if (itemResult.Skipped)
+                result.SkippedCount++;
+            else
+                result.FailedCount++;
         }
 
         FinaliseResult(result, "Quarantine processing completed.");
 
         _logger.LogInformation(
             "[QUARANTINE_RUN_COMPLETE] RunId:{RunId}, Processed:{Processed}, Succeeded:{Succeeded}, Failed:{Failed}, Skipped:{Skipped}",
-            result.RunId, result.ProcessedCount, result.SucceededCount, result.FailedCount, result.SkippedCount);
+            result.RunId,
+            result.ProcessedCount,
+            result.SucceededCount,
+            result.FailedCount,
+            result.SkippedCount);
 
         return result;
     }
@@ -180,6 +236,7 @@ public class QuarantineService
         FileFinding file,
         string requestedBy,
         string runId,
+        DateTime? retentionCutoffUtc,
         CancellationToken cancellationToken)
     {
         var startingStatus = file.Status;
@@ -193,26 +250,45 @@ public class QuarantineService
 
         _logger.LogInformation(
             "[QUARANTINE_FILE_START] RunId:{RunId}, RecordId:{RecordId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Status:{Status}, SourcePath:{SourcePath}, QuarantinePath:{QuarantinePath}",
-            runId, file.Id, file.SourceRecordId, file.FileName, file.Status, sourcePath, quarantinePath);
+            runId,
+            file.Id,
+            file.SourceRecordId,
+            file.FileName,
+            file.Status,
+            sourcePath,
+            quarantinePath);
 
         if (file.Status != FileStatus.PendingQuarantine)
         {
-            return BuildSkippedResult(file, $"Record is not pending quarantine. Current Status:{file.Status}.", startingStatus);
+            return BuildSkippedResult(
+                file,
+                $"Record is not pending quarantine. Current Status:{file.Status}.",
+                startingStatus);
         }
 
-        if (!IsRetentionEligible(file))
+        if (!IsRetentionEligible(file, retentionCutoffUtc))
         {
             file.Status = FileStatus.NotYetStarted;
-            file.ErrorReason = $"Retention threshold not reached. LastModifiedDate:{file.LastModifiedDate:O}, RetentionYears:{_options.RetentionYears}.";
+            file.ErrorReason =
+                $"Retention threshold not reached. LastModifiedDate:{file.LastModifiedDate:O}, RetentionYears:{_options.RetentionYears}.";
             file.ErrorCategory = ErrorCategory.None.ToString();
             file.UpdatedDate = DateTime.UtcNow;
             _repository.Update(file);
 
             _logger.LogInformation(
                 "[QUARANTINE_FILE_SKIPPED_RETENTION] RunId:{RunId}, RecordId:{RecordId}, FileName:{FileName}, LastModifiedDate:{LastModifiedDate:O}, RetentionYears:{RetentionYears}",
-                runId, file.Id, file.FileName, file.LastModifiedDate, _options.RetentionYears);
+                runId,
+                file.Id,
+                file.FileName,
+                file.LastModifiedDate,
+                _options.RetentionYears);
 
-            return BuildSkippedResult(file, file.ErrorReason, startingStatus, sourcePath, quarantinePath);
+            return BuildSkippedResult(
+                file,
+                file.ErrorReason,
+                startingStatus,
+                sourcePath,
+                quarantinePath);
         }
 
         if (string.IsNullOrWhiteSpace(sourcePath))
@@ -252,6 +328,7 @@ public class QuarantineService
         Exception? lastException = null;
         var lastCategory = ErrorCategory.Others;
         var maxAttempts = Math.Max(1, _options.MaxRetryAttempts);
+        var retryDelayMilliseconds = Math.Max(0, _options.RetryDelayMilliseconds);
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -259,24 +336,36 @@ public class QuarantineService
             {
                 _logger.LogInformation(
                     "[QUARANTINE_ATTEMPT_START] RunId:{RunId}, RecordId:{RecordId}, Attempt:{Attempt}/{MaxAttempts}, SourcePath:{SourcePath}, QuarantinePath:{QuarantinePath}",
-                    runId, file.Id, attempt, maxAttempts, sourcePath, quarantinePath);
+                    runId,
+                    file.Id,
+                    attempt,
+                    maxAttempts,
+                    sourcePath,
+                    quarantinePath);
 
                 await _fileService.CopyAsync(sourcePath, quarantinePath, cancellationToken);
                 await _fileService.WriteStubAsync(stubPath, _options.StubMessage, cancellationToken);
                 await _fileService.DeleteSourceAsync(sourcePath, cancellationToken);
 
+                var quarantinedAtUtc = DateTime.UtcNow;
                 file.OriginalFileLocation ??= sourcePath;
                 file.Status = FileStatus.QuarantineComplete;
                 file.QuarantinePath = quarantinePath;
-                file.QuarantineDate = DateTime.UtcNow;
+                file.QuarantineDate = quarantinedAtUtc;
                 file.ErrorReason = string.Empty;
                 file.ErrorCategory = ErrorCategory.None.ToString();
-                file.UpdatedDate = DateTime.UtcNow;
+                file.UpdatedDate = quarantinedAtUtc;
                 _repository.Update(file);
 
                 _logger.LogInformation(
                     "[QUARANTINE_FILE_COMPLETE] RunId:{RunId}, RecordId:{RecordId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, Attempt:{Attempt}, QuarantinePath:{QuarantinePath}, StubPath:{StubPath}",
-                    runId, file.Id, file.SourceRecordId, file.FileName, attempt, quarantinePath, stubPath);
+                    runId,
+                    file.Id,
+                    file.SourceRecordId,
+                    file.FileName,
+                    attempt,
+                    quarantinePath,
+                    stubPath);
 
                 _auditLogger.RecordEvent(
                     eventType: "FileQuarantined",
@@ -313,11 +402,19 @@ public class QuarantineService
                 lastException = ex;
                 lastCategory = ErrorCategoryResolver.FromException(ex);
 
-                _logger.LogWarning(ex,
+                _logger.LogWarning(
+                    ex,
                     "[QUARANTINE_ATTEMPT_FAILED] RunId:{RunId}, RecordId:{RecordId}, FileName:{FileName}, Attempt:{Attempt}/{MaxAttempts}, ErrorCategory:{ErrorCategory}, NextRetryDelayMs:{RetryDelayMs}",
-                    runId, file.Id, file.FileName, attempt, maxAttempts, lastCategory, _options.RetryDelayMilliseconds);
+                    runId,
+                    file.Id,
+                    file.FileName,
+                    attempt,
+                    maxAttempts,
+                    lastCategory,
+                    retryDelayMilliseconds);
 
-                await Task.Delay(Math.Max(0, _options.RetryDelayMilliseconds), cancellationToken);
+                if (retryDelayMilliseconds > 0)
+                    await Task.Delay(retryDelayMilliseconds, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -363,7 +460,14 @@ public class QuarantineService
 
         _logger.LogError(
             "[QUARANTINE_FILE_FAILED] RunId:{RunId}, RecordId:{RecordId}, SourceRecordId:{SourceRecordId}, FileName:{FileName}, ErrorCategory:{ErrorCategory}, LastResolvedCategory:{LastResolvedCategory}, AttemptCount:{AttemptCount}, ErrorReason:{ErrorReason}",
-            runId, file.Id, file.SourceRecordId, file.FileName, errorCategory, lastResolvedCategory, attemptCount, errorReason);
+            runId,
+            file.Id,
+            file.SourceRecordId,
+            file.FileName,
+            errorCategory,
+            lastResolvedCategory,
+            attemptCount,
+            errorReason);
 
         _auditLogger.RecordEvent(
             eventType: "FileQuarantined",
@@ -399,7 +503,9 @@ public class QuarantineService
         };
     }
 
-    private IReadOnlyList<FileFinding> GetQueueCandidates(bool includeAllEligible, IReadOnlyCollection<Guid> requestedIds)
+    private IReadOnlyList<FileFinding> GetQueueCandidates(
+        bool includeAllEligible,
+        IReadOnlyCollection<Guid> requestedIds)
     {
         if (includeAllEligible)
         {
@@ -410,57 +516,76 @@ public class QuarantineService
         if (requestedIds.Count == 0)
             return Array.Empty<FileFinding>();
 
-        return requestedIds
-            .Distinct()
-            .Select(id => _repository.GetById(id))
-            .Where(file => file != null)
-            .Cast<FileFinding>()
-            .ToList();
+        var records = new List<FileFinding>(requestedIds.Count);
+        foreach (var id in requestedIds)
+        {
+            var file = _repository.GetById(id);
+            if (file != null)
+                records.Add(file);
+        }
+
+        return records;
     }
 
-    private IReadOnlyList<FileFinding> GetPendingQuarantineRecords(IReadOnlyCollection<Guid>? recordIds)
+    private IReadOnlyList<FileFinding> GetPendingQuarantineRecords(
+        IReadOnlyCollection<Guid>? recordIds)
     {
         if (recordIds is { Count: > 0 })
         {
-            return recordIds
-                .Distinct()
-                .Select(id => _repository.GetById(id))
-                .Where(file => file != null && file.Status == FileStatus.PendingQuarantine)
-                .Cast<FileFinding>()
-                .ToList();
+            var records = new List<FileFinding>(recordIds.Count);
+            foreach (var id in recordIds)
+            {
+                var file = _repository.GetById(id);
+                if (file?.Status == FileStatus.PendingQuarantine)
+                    records.Add(file);
+            }
+
+            return records;
         }
 
         return _repository.GetAll()
-            .Where(x => x.Status == FileStatus.PendingQuarantine)
+            .Where(file => file.Status == FileStatus.PendingQuarantine)
             .ToList();
     }
 
     private static bool IsEligibleForQuarantineQueue(FileFinding file)
         => file.Status == FileStatus.NotYetStarted
-           && string.Equals(file.FindingType, FindingType.Obsolete, StringComparison.OrdinalIgnoreCase);
+           && string.Equals(
+               file.FindingType,
+               FindingType.Obsolete,
+               StringComparison.OrdinalIgnoreCase);
 
-    private bool IsRetentionEligible(FileFinding file)
+    private static bool IsRetentionEligible(
+        FileFinding file,
+        DateTime? retentionCutoffUtc)
     {
-        if (!_options.EnableRetentionCheck)
+        if (!retentionCutoffUtc.HasValue)
             return true;
 
-        if (!file.LastModifiedDateUtc.HasValue)
-            return false;
-
-        return file.LastModifiedDateUtc.Value <= DateTime.UtcNow.AddYears(-Math.Max(0, _options.RetentionYears));
+        return file.LastModifiedDateUtc.HasValue
+               && file.LastModifiedDateUtc.Value <= retentionCutoffUtc.Value;
     }
 
     private static QuarantineBatchResult CreateResult(string? runId = null)
         => new()
         {
-            RunId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId,
+            RunId = string.IsNullOrWhiteSpace(runId)
+                ? Guid.NewGuid().ToString("N")
+                : runId,
             StartedAtUtc = DateTime.UtcNow
         };
 
     private static void FinaliseResult(QuarantineBatchResult result, string message)
     {
         result.CompletedAtUtc = DateTime.UtcNow;
-        result.SkippedCount = result.Items.Count(x => x.Skipped);
+        result.SkippedCount = 0;
+
+        foreach (var item in result.Items)
+        {
+            if (item.Skipped)
+                result.SkippedCount++;
+        }
+
         result.Message = message;
     }
 
@@ -491,14 +616,20 @@ public class QuarantineService
     private static void AddMissingRecordResults(
         QuarantineBatchResult result,
         IReadOnlyCollection<Guid> requestedIds,
-        IEnumerable<Guid> foundIds)
+        IReadOnlyCollection<FileFinding> foundRecords)
     {
-        var foundSet = foundIds.ToHashSet();
-        foreach (var missingId in requestedIds.Where(id => !foundSet.Contains(id)))
+        var foundIds = new HashSet<Guid>(foundRecords.Count);
+        foreach (var record in foundRecords)
+            foundIds.Add(record.Id);
+
+        foreach (var requestedId in requestedIds)
         {
+            if (foundIds.Contains(requestedId))
+                continue;
+
             result.Items.Add(new QuarantineItemResult
             {
-                RecordId = missingId,
+                RecordId = requestedId,
                 StartingStatus = FileStatus.NotYetStarted,
                 FinalStatus = FileStatus.NotYetStarted,
                 Skipped = true,

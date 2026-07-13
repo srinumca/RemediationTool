@@ -7,22 +7,19 @@ namespace RemediationTool.Infrastructure.Repositories;
 
 public class JsonIngestionStagingRepository : IIngestionStagingRepository
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
     private readonly string _filePath;
     private readonly object _lock = new();
-    private readonly JsonSerializerOptions _jsonOptions;
 
     public JsonIngestionStagingRepository()
     {
         var dataDirectory = Path.Combine(AppContext.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
-
         _filePath = Path.Combine(dataDirectory, "ingestion-staged-findings.json");
 
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
+        if (!File.Exists(_filePath))
+            JsonFileHelper.WriteAllText(_filePath, "[]");
     }
 
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
@@ -36,39 +33,49 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         lock (_lock)
         {
             var stagedFindings = LoadAll();
-
             stagedFindings.RemoveAll(existing =>
                 string.Equals(existing.JobId, jobId, StringComparison.OrdinalIgnoreCase));
 
-            var newRecords = validFindings
-                .Select((finding, index) => new IngestionStagedFinding
+            stagedFindings.EnsureCapacity(stagedFindings.Count + validFindings.Count);
+            var createdAtUtc = DateTime.UtcNow;
+
+            for (var index = 0; index < validFindings.Count; index++)
+            {
+                stagedFindings.Add(new IngestionStagedFinding
                 {
                     JobId = jobId,
                     SequenceNumber = index + 1,
-                    Finding = finding,
-                    CreatedAtUtc = DateTime.UtcNow
-                })
-                .ToList();
+                    Finding = validFindings[index],
+                    CreatedAtUtc = createdAtUtc
+                });
+            }
 
-            stagedFindings.AddRange(newRecords);
             SaveAll(stagedFindings);
         }
     }
 
-    public List<FileFinding> GetValidFindingsAfter(string jobId, int lastProcessedRecordCount)
+    public List<FileFinding> GetValidFindingsAfter(
+        string jobId,
+        int lastProcessedRecordCount)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return new List<FileFinding>();
 
         lock (_lock)
         {
-            return LoadAll()
-                .Where(record =>
-                    string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase)
-                    && record.SequenceNumber > lastProcessedRecordCount)
-                .OrderBy(record => record.SequenceNumber)
-                .Select(record => record.Finding)
-                .ToList();
+            var stagedFindings = LoadAll();
+            var result = new List<FileFinding>();
+
+            foreach (var record in stagedFindings)
+            {
+                if (record.SequenceNumber > lastProcessedRecordCount
+                    && string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(record.Finding);
+                }
+            }
+
+            return result;
         }
     }
 
@@ -79,9 +86,14 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
 
         lock (_lock)
         {
-            return LoadAll()
-                .Count(record =>
-                    string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+            var count = 0;
+            foreach (var record in LoadAll())
+            {
+                if (string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase))
+                    count++;
+            }
+
+            return count;
         }
     }
 
@@ -106,18 +118,27 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         if (!File.Exists(_filePath))
             return new List<IngestionStagedFinding>();
 
-        var json = File.ReadAllText(_filePath);
-
+        var json = JsonFileHelper.ReadAllText(_filePath);
         if (string.IsNullOrWhiteSpace(json))
             return new List<IngestionStagedFinding>();
 
-        return JsonSerializer.Deserialize<List<IngestionStagedFinding>>(json, _jsonOptions)
+        return JsonSerializer.Deserialize<List<IngestionStagedFinding>>(json, JsonOptions)
                ?? new List<IngestionStagedFinding>();
     }
 
     private void SaveAll(List<IngestionStagedFinding> stagedFindings)
     {
-        var json = JsonSerializer.Serialize(stagedFindings, _jsonOptions);
-        File.WriteAllText(_filePath, json);
+        var json = JsonSerializer.Serialize(stagedFindings, JsonOptions);
+        JsonFileHelper.WriteAllText(_filePath, json);
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 }

@@ -1,15 +1,17 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using RemediationTool.Application.Interfaces;
 
 namespace RemediationTool.Infrastructure;
 
 public class LocalStorageService : IStorageService
 {
+    private const int FileBufferSize = 81920;
     private readonly string _rootPath;
 
     public LocalStorageService(IConfiguration configuration)
     {
-        _rootPath = configuration["Storage:LocalRootPath"] ?? "storage";
+        _rootPath = Path.GetFullPath(configuration["Storage:LocalRootPath"] ?? "storage");
+        Directory.CreateDirectory(_rootPath);
     }
 
     public async Task UploadAsync(string key, Stream stream)
@@ -17,19 +19,26 @@ public class LocalStorageService : IStorageService
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
 
+        ArgumentNullException.ThrowIfNull(stream);
+
         var fullPath = GetFullPath(key);
         var directory = Path.GetDirectoryName(fullPath);
 
         if (!string.IsNullOrWhiteSpace(directory))
-        {
             Directory.CreateDirectory(directory);
-        }
 
-        await using var fileStream = File.Create(fullPath);
+        await using var fileStream = new FileStream(
+            fullPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            FileBufferSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
         await stream.CopyToAsync(fileStream);
     }
 
-    public async Task<Stream> DownloadAsync(string key)
+    public Task<Stream> DownloadAsync(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
@@ -37,18 +46,28 @@ public class LocalStorageService : IStorageService
         var fullPath = GetFullPath(key);
 
         if (!File.Exists(fullPath))
-            throw new FileNotFoundException($"File not found in local storage: {key}");
+            throw new FileNotFoundException($"File not found in local storage: {key}", fullPath);
 
-        var memoryStream = new MemoryStream();
+        Stream stream = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            FileBufferSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-        await using var fileStream = File.OpenRead(fullPath);
-        await fileStream.CopyToAsync(memoryStream);
-
-        memoryStream.Position = 0;
-        return memoryStream;
+        return Task.FromResult(stream);
     }
 
-    public async Task MoveAsync(string sourceKey, string destinationKey)
+    public Task<bool> ExistsAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return Task.FromResult(false);
+
+        return Task.FromResult(File.Exists(GetFullPath(key)));
+    }
+
+    public Task MoveAsync(string sourceKey, string destinationKey)
     {
         if (string.IsNullOrWhiteSpace(sourceKey))
             throw new ArgumentException("Source key is required.", nameof(sourceKey));
@@ -60,20 +79,14 @@ public class LocalStorageService : IStorageService
         var destinationPath = GetFullPath(destinationKey);
 
         if (!File.Exists(sourcePath))
-            throw new FileNotFoundException($"Source file not found: {sourceKey}");
+            throw new FileNotFoundException($"Source file not found: {sourceKey}", sourcePath);
 
         var destinationDirectory = Path.GetDirectoryName(destinationPath);
-
         if (!string.IsNullOrWhiteSpace(destinationDirectory))
-        {
             Directory.CreateDirectory(destinationDirectory);
-        }
 
-        await using var sourceStream = File.OpenRead(sourcePath);
-        await using var destinationStream = File.Create(destinationPath);
-        await sourceStream.CopyToAsync(destinationStream);
-
-        File.Delete(sourcePath);
+        File.Move(sourcePath, destinationPath, overwrite: true);
+        return Task.CompletedTask;
     }
 
     public Task DeleteAsync(string key)
@@ -82,11 +95,8 @@ public class LocalStorageService : IStorageService
             throw new ArgumentException("Storage key is required.", nameof(key));
 
         var fullPath = GetFullPath(key);
-
         if (File.Exists(fullPath))
-        {
             File.Delete(fullPath);
-        }
 
         return Task.CompletedTask;
     }
@@ -97,6 +107,6 @@ public class LocalStorageService : IStorageService
             .Replace('\\', Path.DirectorySeparatorChar)
             .Replace('/', Path.DirectorySeparatorChar);
 
-        return Path.Combine(_rootPath, normalizedKey);
+        return Path.GetFullPath(Path.Combine(_rootPath, normalizedKey));
     }
 }

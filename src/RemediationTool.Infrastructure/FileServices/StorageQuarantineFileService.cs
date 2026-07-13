@@ -10,10 +10,12 @@ namespace RemediationTool.Infrastructure.FileServices;
 /// <summary>
 /// Storage-backed quarantine implementation used when Storage:Type is S3 or any
 /// non-local IStorageService implementation is configured.
-/// Keeps quarantine compatible with the same storage abstraction used by ingestion.
 /// </summary>
 public sealed class StorageQuarantineFileService : IQuarantineFileService
 {
+    private static readonly HashSet<char> InvalidStorageSegmentChars =
+        new(Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\' }));
+
     private readonly IStorageService _storageService;
     private readonly QuarantineProcessingOptions _options;
     private readonly ILogger<StorageQuarantineFileService> _logger;
@@ -64,10 +66,11 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
             ? finding.Id.ToString("N")
             : SanitizeStorageSegment(finding.SourceRecordId);
 
+        var nowUtc = DateTime.UtcNow;
         var quarantinePath = CombineStorageKey(
             _options.QuarantineRootPath,
-            DateTime.UtcNow.ToString("yyyy"),
-            DateTime.UtcNow.ToString("MM"),
+            nowUtc.ToString("yyyy"),
+            nowUtc.ToString("MM"),
             sourceRecordPrefix,
             safeFileName);
 
@@ -101,6 +104,7 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
             return false;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var normalizedPath = NormalizeStorageKey(path);
 
         _logger.LogInformation(
@@ -109,18 +113,19 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
 
         try
         {
-            await using var stream = await _storageService.DownloadAsync(normalizedPath);
+            var exists = await _storageService.ExistsAsync(normalizedPath);
 
             _logger.LogInformation(
-                "[STORAGE_QUARANTINE_EXISTS_COMPLETE] Path:{Path}, Exists:true, SizeBytes:{SizeBytes}",
+                "[STORAGE_QUARANTINE_EXISTS_COMPLETE] Path:{Path}, Exists:{Exists}",
                 normalizedPath,
-                stream.CanSeek ? stream.Length : null);
+                exists);
 
-            return true;
+            return exists;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
+            _logger.LogWarning(
+                ex,
                 "[STORAGE_QUARANTINE_EXISTS_FAILED] Path:{Path}, Exists:false, Error:{Error}",
                 normalizedPath,
                 ex.Message);
@@ -129,13 +134,18 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
         }
     }
 
-    public async Task CopyAsync(string sourcePath, string quarantinePath, CancellationToken cancellationToken = default)
+    public async Task CopyAsync(
+        string sourcePath,
+        string quarantinePath,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
             throw new ArgumentException("Source path is required.", nameof(sourcePath));
 
         if (string.IsNullOrWhiteSpace(quarantinePath))
             throw new ArgumentException("Quarantine path is required.", nameof(quarantinePath));
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var normalizedSourcePath = NormalizeStorageKey(sourcePath);
         var normalizedQuarantinePath = NormalizeStorageKey(quarantinePath);
@@ -146,28 +156,28 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
             normalizedQuarantinePath);
 
         await using var sourceStream = await _storageService.DownloadAsync(normalizedSourcePath);
-        await using var copyStream = new MemoryStream();
-        await sourceStream.CopyToAsync(copyStream, cancellationToken);
-        copyStream.Position = 0;
+        if (sourceStream.CanSeek)
+            sourceStream.Position = 0;
 
-        _logger.LogInformation(
-            "[STORAGE_QUARANTINE_COPY_DOWNLOADED] SourcePath:{SourcePath}, SizeBytes:{SizeBytes}",
-            normalizedSourcePath,
-            copyStream.Length);
-
-        await _storageService.UploadAsync(normalizedQuarantinePath, copyStream);
+        var sizeBytes = sourceStream.CanSeek ? sourceStream.Length : (long?)null;
+        await _storageService.UploadAsync(normalizedQuarantinePath, sourceStream);
 
         _logger.LogInformation(
             "[STORAGE_QUARANTINE_COPY_COMPLETE] SourcePath:{SourcePath}, DestinationPath:{DestinationPath}, SizeBytes:{SizeBytes}",
             normalizedSourcePath,
             normalizedQuarantinePath,
-            copyStream.Length);
+            sizeBytes);
     }
 
-    public async Task WriteStubAsync(string stubPath, string message, CancellationToken cancellationToken = default)
+    public async Task WriteStubAsync(
+        string stubPath,
+        string message,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(stubPath))
             throw new ArgumentException("Stub path is required.", nameof(stubPath));
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var normalizedStubPath = NormalizeStorageKey(stubPath);
         var content = Encoding.UTF8.GetBytes(message ?? string.Empty);
@@ -177,7 +187,7 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
             normalizedStubPath,
             content.Length);
 
-        await using var stream = new MemoryStream(content);
+        await using var stream = new MemoryStream(content, writable: false);
         await _storageService.UploadAsync(normalizedStubPath, stream);
 
         _logger.LogInformation(
@@ -186,11 +196,14 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
             content.Length);
     }
 
-    public async Task DeleteSourceAsync(string sourcePath, CancellationToken cancellationToken = default)
+    public async Task DeleteSourceAsync(
+        string sourcePath,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
             throw new ArgumentException("Source path is required.", nameof(sourcePath));
 
+        cancellationToken.ThrowIfCancellationRequested();
         var normalizedSourcePath = NormalizeStorageKey(sourcePath);
 
         _logger.LogInformation(
@@ -205,11 +218,17 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
     }
 
     private static string CombineStorageKey(params string?[] segments)
-        => string.Join(
-            "/",
-            segments
-                .Where(segment => !string.IsNullOrWhiteSpace(segment))
-                .Select(segment => NormalizeStorageKey(segment!)));
+    {
+        var normalizedSegments = new List<string>(segments.Length);
+
+        foreach (var segment in segments)
+        {
+            if (!string.IsNullOrWhiteSpace(segment))
+                normalizedSegments.Add(NormalizeStorageKey(segment));
+        }
+
+        return string.Join('/', normalizedSegments);
+    }
 
     private static string NormalizeStorageKey(string key)
     {
@@ -222,7 +241,9 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
         {
             var withoutScheme = normalized[5..];
             var firstSlashIndex = withoutScheme.IndexOf('/');
-            normalized = firstSlashIndex >= 0 ? withoutScheme[(firstSlashIndex + 1)..] : string.Empty;
+            normalized = firstSlashIndex >= 0
+                ? withoutScheme[(firstSlashIndex + 1)..]
+                : string.Empty;
         }
 
         return normalized.Trim('/');
@@ -240,8 +261,18 @@ public sealed class StorageQuarantineFileService : IQuarantineFileService
 
     private static string SanitizeStorageSegment(string value)
     {
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var sanitized = new string(value.Select(ch => invalidChars.Contains(ch) || ch == '/' || ch == '\\' ? '_' : ch).ToArray());
-        return string.IsNullOrWhiteSpace(sanitized) ? Guid.NewGuid().ToString("N") : sanitized;
+        char[]? sanitized = null;
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (!InvalidStorageSegmentChars.Contains(value[index]))
+                continue;
+
+            sanitized ??= value.ToCharArray();
+            sanitized[index] = '_';
+        }
+
+        var result = sanitized == null ? value : new string(sanitized);
+        return string.IsNullOrWhiteSpace(result) ? Guid.NewGuid().ToString("N") : result;
     }
 }
