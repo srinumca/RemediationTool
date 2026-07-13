@@ -56,8 +56,8 @@ for statement in module.body:
         # Drop the duplicate Step Function transform.
         continue
 
-    # All four completion paths use the same cleanup call: manual, resume-empty,
-    # resume-success and Step Function ingestion.
+    # Manual ingestion, resume-success and Step Function ingestion use the same
+    # cleanup statement. The resume-empty path returns before staging cleanup.
     if "CleanupStagingForCompletedJob(response);" in old:
         occurrence = seen.get("cleanup", 0)
         seen["cleanup"] = occurrence + 1
@@ -66,7 +66,7 @@ for statement in module.body:
                 "                CleanupStagingForCompletedJob(response);\n")
             call.args[2] = ast.Constant(
                 "                await CleanupStagingForCompletedJobAsync(response, cancellationToken);\n")
-            convert_to_count(call, 4)
+            convert_to_count(call, 3)
             new_body.append(statement)
         # Later cleanup blocks are already covered by the global replacement.
         continue
@@ -95,7 +95,7 @@ required_counts = {
     "persist": 2,
     "summary": 2,
     "failure-summary": 2,
-    "cleanup": 4,
+    "cleanup": 3,
 }
 for group, expected in required_counts.items():
     actual = seen.get(group, 0)
