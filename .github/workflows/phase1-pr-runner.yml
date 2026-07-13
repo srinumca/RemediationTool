@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   apply-and-validate:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Phase 1 branch
@@ -24,9 +25,11 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Apply Phase 1 changes
+        id: apply
         shell: bash
         run: |
-          python3 - <<'PY'
+          set +e
+          python3 - <<'PY' > phase1-apply.log 2>&1
           from pathlib import Path
           import textwrap
 
@@ -38,17 +41,36 @@ jobs:
           script = textwrap.dedent(workflow[start:end])
           exec(compile(script, 'phase1-apply-script', 'exec'))
           PY
+          code=$?
+          cat phase1-apply.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit apply diagnostics
+        if: steps.apply.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add phase1-apply.log
+          git commit -m "Capture Phase 1 apply failure"
+          git push origin HEAD:agent/phase1-parquet-first-ingestion
+          exit 1
 
       - name: Restore
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet restore RemediationTool.sln
 
       - name: Build
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet build RemediationTool.sln --configuration Release --no-restore
 
       - name: Test
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet test RemediationTool.sln --configuration Release --no-build
 
       - name: Commit validated Phase 1 changes
+        if: steps.apply.outputs.exit_code == '0'
         shell: bash
         run: |
           rm .github/workflows/phase1-apply-validate.yml
