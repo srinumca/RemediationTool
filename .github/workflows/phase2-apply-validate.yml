@@ -25,22 +25,46 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Apply ingestion transformations
-        run: python3 tools/apply_phase2_ingestion.py
+        id: apply
+        shell: bash
+        run: |
+          set +e
+          python3 tools/apply_phase2_ingestion.py > phase2-apply.log 2>&1
+          code=$?
+          cat phase2-apply.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit apply diagnostics
+        if: steps.apply.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f phase2-apply.log
+          git commit -m "Capture Phase 2 apply failure"
+          git push origin HEAD:agent/phase2-asynchronous-bounded-io
+          exit 1
 
       - name: Restore
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet restore RemediationTool.sln
 
       - name: Build
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet build RemediationTool.sln --configuration Release --no-restore
 
       - name: Test
+        if: steps.apply.outputs.exit_code == '0'
         run: dotnet test RemediationTool.sln --configuration Release --no-build
 
       - name: Commit validated Phase 2 transformations
+        if: steps.apply.outputs.exit_code == '0'
         shell: bash
         run: |
           rm .github/workflows/phase2-apply-validate.yml
           rm tools/apply_phase2_ingestion.py
+          rm -f phase2-apply.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
