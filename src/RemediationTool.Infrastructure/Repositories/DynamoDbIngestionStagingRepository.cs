@@ -17,10 +17,12 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 {
     private const int BatchWriteLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
+    private const int MaximumSupportedBatchWriteConcurrency = 16;
     private static readonly TimeSpan TtlDuration = TimeSpan.FromDays(7);
 
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
+    private readonly int _maxBatchWriteConcurrency;
     private readonly ILogger<DynamoDbIngestionStagingRepository> _logger;
 
     public DynamoDbIngestionStagingRepository(
@@ -30,6 +32,10 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
     {
         _dynamoDb = dynamoDb;
         _tableName = options.Value.StagedFindingsTableName;
+        _maxBatchWriteConcurrency = Math.Clamp(
+            options.Value.MaxBatchWriteConcurrency,
+            1,
+            MaximumSupportedBatchWriteConcurrency);
         _logger = logger;
     }
 
@@ -42,10 +48,11 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             return;
 
         _logger.LogInformation(
-            "[STAGING_SAVE_START] JobId:{JobId}, Records:{Records}, BatchWriteLimit:{BatchWriteLimit}",
+            "[STAGING_SAVE_START] JobId:{JobId}, Records:{Records}, BatchWriteLimit:{BatchWriteLimit}, MaxConcurrency:{MaxConcurrency}",
             jobId,
             validFindings.Count,
-            BatchWriteLimit);
+            BatchWriteLimit,
+            _maxBatchWriteConcurrency);
 
         DeleteByJobId(jobId);
 
@@ -54,52 +61,67 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         var expiresAtText = new DateTimeOffset(nowUtc.Add(TtlDuration))
             .ToUnixTimeSeconds()
             .ToString(CultureInfo.InvariantCulture);
+        var batchCount = (validFindings.Count + BatchWriteLimit - 1) / BatchWriteLimit;
 
-        var sequenceNumber = 1;
-        var chunkNumber = 0;
-
-        foreach (var chunk in validFindings.Chunk(BatchWriteLimit))
+        try
         {
-            chunkNumber++;
-            var writeRequests = new List<WriteRequest>(chunk.Length);
-
-            foreach (var finding in chunk)
-            {
-                var item = new Dictionary<string, AttributeValue>(5)
+            Parallel.For(
+                0,
+                batchCount,
+                new ParallelOptions
                 {
-                    ["jobId"] = new AttributeValue { S = jobId },
-                    ["sequenceNumber"] = new AttributeValue
+                    MaxDegreeOfParallelism = _maxBatchWriteConcurrency
+                },
+                batchIndex =>
+                {
+                    var startIndex = batchIndex * BatchWriteLimit;
+                    var count = Math.Min(BatchWriteLimit, validFindings.Count - startIndex);
+                    var writeRequests = new List<WriteRequest>(count);
+
+                    for (var offset = 0; offset < count; offset++)
                     {
-                        N = sequenceNumber.ToString(CultureInfo.InvariantCulture)
-                    },
-                    ["CreatedAtUtc"] = new AttributeValue { S = createdAtText },
-                    ["ExpiresAt"] = new AttributeValue { N = expiresAtText },
-                    ["finding"] = new AttributeValue
-                    {
-                        M = DynamoDbAttributeMap.ToMap(finding)
+                        var findingIndex = startIndex + offset;
+                        var item = new Dictionary<string, AttributeValue>(5)
+                        {
+                            ["jobId"] = new AttributeValue { S = jobId },
+                            ["sequenceNumber"] = new AttributeValue
+                            {
+                                N = (findingIndex + 1).ToString(CultureInfo.InvariantCulture)
+                            },
+                            ["CreatedAtUtc"] = new AttributeValue { S = createdAtText },
+                            ["ExpiresAt"] = new AttributeValue { N = expiresAtText },
+                            ["finding"] = new AttributeValue
+                            {
+                                M = DynamoDbAttributeMap.ToMap(validFindings[findingIndex])
+                            }
+                        };
+
+                        writeRequests.Add(new WriteRequest
+                        {
+                            PutRequest = new PutRequest { Item = item }
+                        });
                     }
-                };
 
-                writeRequests.Add(new WriteRequest
-                {
-                    PutRequest = new PutRequest { Item = item }
+                    ExecuteBatchWriteWithRetry(
+                        writeRequests,
+                        operationName: "StagingSave",
+                        jobId,
+                        chunkNumber: batchIndex + 1,
+                        totalInputCount: validFindings.Count);
                 });
-                sequenceNumber++;
-            }
-
-            ExecuteBatchWriteWithRetry(
-                writeRequests,
-                operationName: "StagingSave",
-                jobId,
-                chunkNumber,
-                totalInputCount: validFindings.Count);
+        }
+        catch (AggregateException ex)
+        {
+            throw new InvalidOperationException(
+                $"Staging save failed for job {jobId}. A subsequent retry first removes partial staging rows and recreates the complete ordered recovery set.",
+                ex.Flatten());
         }
 
         _logger.LogInformation(
             "[STAGING_SAVE_COMPLETE] JobId:{JobId}, Records:{Records}, Chunks:{Chunks}",
             jobId,
             validFindings.Count,
-            chunkNumber);
+            batchCount);
     }
 
     public List<FileFinding> GetValidFindingsAfter(
@@ -212,29 +234,52 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             }).GetAwaiter().GetResult();
 
             lastKey = GetNextKey(response.LastEvaluatedKey);
+            var pageBatchCount = (response.Items.Count + BatchWriteLimit - 1) / BatchWriteLimit;
+            var pageChunkStart = chunkNumber;
 
-            foreach (var chunk in response.Items.Chunk(BatchWriteLimit))
+            try
             {
-                chunkNumber++;
-                var deleteRequests = new List<WriteRequest>(chunk.Length);
-
-                foreach (var key in chunk)
-                {
-                    deleteRequests.Add(new WriteRequest
+                Parallel.For(
+                    0,
+                    pageBatchCount,
+                    new ParallelOptions
                     {
-                        DeleteRequest = new DeleteRequest { Key = key }
+                        MaxDegreeOfParallelism = _maxBatchWriteConcurrency
+                    },
+                    batchIndex =>
+                    {
+                        var startIndex = batchIndex * BatchWriteLimit;
+                        var count = Math.Min(BatchWriteLimit, response.Items.Count - startIndex);
+                        var deleteRequests = new List<WriteRequest>(count);
+
+                        for (var offset = 0; offset < count; offset++)
+                        {
+                            deleteRequests.Add(new WriteRequest
+                            {
+                                DeleteRequest = new DeleteRequest
+                                {
+                                    Key = response.Items[startIndex + offset]
+                                }
+                            });
+                        }
+
+                        ExecuteBatchWriteWithRetry(
+                            deleteRequests,
+                            operationName: "StagingDelete",
+                            jobId,
+                            chunkNumber: pageChunkStart + batchIndex + 1,
+                            totalInputCount: response.Items.Count);
                     });
-                }
-
-                ExecuteBatchWriteWithRetry(
-                    deleteRequests,
-                    operationName: "StagingDelete",
-                    jobId,
-                    chunkNumber,
-                    totalInputCount: response.Items.Count);
-
-                deletedCount += chunk.Length;
             }
+            catch (AggregateException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Staging cleanup failed for job {jobId}. Remaining rows retain their TTL and can be cleaned safely on the next attempt.",
+                    ex.Flatten());
+            }
+
+            chunkNumber += pageBatchCount;
+            deletedCount += response.Items.Count;
         }
         while (lastKey != null);
 
