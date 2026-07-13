@@ -1,0 +1,31 @@
+name: Agent large ingestion validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore RemediationTool.sln
+
+      - name: Build
+        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RemediationTool.sln --configuration Release --no-build --verbosity normal
