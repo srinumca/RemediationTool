@@ -25,6 +25,11 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
         _tableName = options.Value.CheckpointsTableName;
     }
 
+    /// <summary>
+    /// Retrieves an IngestionCheckpoint by its jobId from DynamoDB.
+    /// </summary>
+    /// <param name="jobId">The jobId of the ingestion checkpoint.</param>
+    /// <returns>The IngestionCheckpoint if found; otherwise, null.</returns>
     public IngestionCheckpoint? GetByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return null;
