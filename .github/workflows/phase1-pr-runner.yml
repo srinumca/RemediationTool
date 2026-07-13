@@ -37,10 +37,23 @@ jobs:
           marker_end = "\n          PY\n\n      - name: Restore"
           start = workflow.index(marker_start) + len(marker_start)
           end = workflow.index(marker_end, start)
-          lines = workflow[start:end].splitlines()
-          script = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in lines)
+
+          output_lines = []
+          inside_triple_string = False
+          for line in workflow[start:end].splitlines():
+              triple_quote_count = line.count("'''")
+              if inside_triple_string:
+                  if triple_quote_count % 2 == 1:
+                      output_lines.append(line[10:] if line.startswith("          ") else line)
+                      inside_triple_string = False
+                  else:
+                      output_lines.append(line)
+              else:
+                  output_lines.append(line[10:] if line.startswith("          ") else line)
+                  if triple_quote_count % 2 == 1:
+                      inside_triple_string = True
+
+          script = "\n".join(output_lines)
           exec(compile(script, 'phase1-apply-script', 'exec'))
           PY
           code=$?
