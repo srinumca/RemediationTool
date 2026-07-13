@@ -77,23 +77,42 @@ jobs:
         run: dotnet restore RemediationTool.sln
 
       - name: Build
+        id: build
         if: steps.apply.outputs.exit_code == '0'
-        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+        shell: bash
+        run: |
+          set +e
+          dotnet build RemediationTool.sln --configuration Release --no-restore > phase1-build.log 2>&1
+          code=$?
+          cat phase1-build.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit build diagnostics
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f phase1-build.log
+          git commit -m "Capture Phase 1 build failure"
+          git push origin HEAD:agent/phase1-parquet-first-ingestion
+          exit 1
 
       - name: Test
-        if: steps.apply.outputs.exit_code == '0'
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0'
         run: dotnet test RemediationTool.sln --configuration Release --no-build
 
       - name: Commit validated Phase 1 changes
-        if: steps.apply.outputs.exit_code == '0'
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0'
         shell: bash
         run: |
           rm .github/workflows/phase1-apply-validate.yml
           rm .github/workflows/phase1-pr-runner.yml
-          rm -f phase1-apply.log
+          rm -f phase1-apply.log phase1-build.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -u phase1-apply.log
+          git add -u phase1-apply.log phase1-build.log
           git add src/RemediationTool.Application/Options/IngestionProcessingOptions.cs \
                   src/RemediationTool.Application/Services/IngestionService.cs \
                   src/RemediationTool.Application/Services/IngestionResumeStoreCoordinator.cs \
