@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Moq;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
 using RemediationTool.Application.Services;
@@ -134,13 +135,12 @@ public sealed class Phase2AsyncIoTests
 
         try
         {
-            var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Storage:LocalRootPath"] = rootPath
-                })
-                .Build();
-            var storage = new LocalStorageService(configuration);
+            var configuration = new Mock<IConfiguration>();
+            configuration
+                .Setup(config => config["Storage:LocalRootPath"])
+                .Returns(rootPath);
+
+            var storage = new LocalStorageService(configuration.Object);
             var payload = "sourceRecordId,findingFileName\n1,file.txt";
 
             await using (var upload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload)))
