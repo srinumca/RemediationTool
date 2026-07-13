@@ -10,13 +10,13 @@ permissions:
 
 jobs:
   apply-and-validate:
-    if: github.actor != 'github-actions[bot]' && github.head_ref == 'agent/phase1-remove-staging-copy'
+    if: github.actor != 'github-actions[bot]' && github.head_ref == 'agent/phase1-final-cleanup'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout cleanup branch
         uses: actions/checkout@v4
         with:
-          ref: agent/phase1-remove-staging-copy
+          ref: agent/phase1-final-cleanup
           fetch-depth: 0
 
       - name: Setup .NET 8
@@ -76,8 +76,8 @@ jobs:
 ''')
           PY
 
-      - name: Remove obsolete head workflow
-        run: rm -f .github/workflows/phase1-copy-validation.yml
+      - name: Remove trigger marker
+        run: rm -f .phase1-final-cleanup-trigger
 
       - name: Restore
         run: dotnet restore RemediationTool.sln
@@ -95,6 +95,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/RemediationTool.Application/Services/IngestionService.cs \
                   tests/RemediationTool.Infrastructure.Tests/IngestionResumeStoreCoordinatorTests.cs \
-                  .github/workflows/phase1-copy-validation.yml
+                  .phase1-final-cleanup-trigger
           git commit -m "Remove duplicate staging list allocation"
-          git push origin HEAD:agent/phase1-remove-staging-copy
+          git push origin HEAD:agent/phase1-final-cleanup
