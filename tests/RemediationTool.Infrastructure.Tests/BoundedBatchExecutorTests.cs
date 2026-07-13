@@ -1,4 +1,5 @@
 using RemediationTool.Infrastructure.Repositories;
+using Xunit;
 
 namespace RemediationTool.Infrastructure.Tests;
 
