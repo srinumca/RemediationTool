@@ -1,6 +1,9 @@
 name: Validate Phase 1 compatibility defaults
 
 on:
+  push:
+    branches:
+      - agent/phase1-parquet-first-ingestion
   pull_request:
     branches:
       - main
