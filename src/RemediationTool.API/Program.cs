@@ -108,11 +108,17 @@ try
         builder.Services.Configure<DynamoDbOptions>(
             builder.Configuration.GetSection(DynamoDbOptions.SectionName));
 
-        builder.Services.AddSingleton<IFileFindingRepository, DynamoDbFileFindingRepository>();
+        // Keep the existing repositories as the read/single-record implementation.
+        // The wrappers only replace high-volume batch write paths with bounded,
+        // fully awaited concurrency and the same retry/idempotency behavior.
+        builder.Services.AddSingleton<DynamoDbFileFindingRepository>();
+        builder.Services.AddSingleton<IFileFindingRepository, ConcurrentDynamoDbFileFindingRepository>();
         builder.Services.AddSingleton<IIngestionJobAuditRepository, DynamoDbIngestionJobAuditRepository>();
-        builder.Services.AddSingleton<IRejectedRowRepository, DynamoDbRejectedRowRepository>();
+        builder.Services.AddSingleton<DynamoDbRejectedRowRepository>();
+        builder.Services.AddSingleton<IRejectedRowRepository, ConcurrentDynamoDbRejectedRowRepository>();
         builder.Services.AddSingleton<IIngestionCheckpointRepository, DynamoDbIngestionCheckpointRepository>();
-        builder.Services.AddSingleton<IIngestionStagingRepository, DynamoDbIngestionStagingRepository>();
+        builder.Services.AddSingleton<DynamoDbIngestionStagingRepository>();
+        builder.Services.AddSingleton<IIngestionStagingRepository, ConcurrentDynamoDbIngestionStagingRepository>();
         builder.Services.AddScoped<DynamoDbTableInitialiser>();
     }
     else
