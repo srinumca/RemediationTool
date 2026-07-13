@@ -338,6 +338,10 @@ public class IngestionService : IIngestionService
                     jobAudit,
                     cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 response.Status = IngestionJobStatus.Failed;
@@ -995,6 +999,10 @@ public class IngestionService : IIngestionService
                     "[PARQUET_RESUME_EMPTY_FALLBACK] JobId:{JobId}, Path:{Path}",
                     jobId,
                     workingFilePath);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
