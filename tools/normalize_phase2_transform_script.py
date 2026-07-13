@@ -36,7 +36,6 @@ for statement in module.body:
         new_body.append(statement)
         continue
 
-    # Manual ProcessAsync and Step Function IngestAsync contain identical blocks.
     duplicate_groups = {
         "prepare": "var stagingWritten = await PrepareResumeStoreAsync(\n",
         "persist": "            PersistValidFindingsInBatches(\n",
@@ -55,8 +54,6 @@ for statement in module.body:
             new_body.append(statement)
         continue
 
-    # The original two-line fragment appears both in a log call and in the
-    # Parquet read. Scope the transform to the actual ReadAfterAsync invocation.
     if old == (
         "                    workingFilePath,\n"
         "                    checkpoint.LastProcessedRecordCount);\n"
@@ -74,8 +71,6 @@ for statement in module.body:
         new_body.append(statement)
         continue
 
-    # Keep the dedicated successful-resume block. Its indentation differs from
-    # the two common resume summary statements and it also updates cleanup.
     if (
         "response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);" in old
         and "response.MetadataJsonPath = response.ProcessingSummaryPath;" in old
@@ -84,8 +79,6 @@ for statement in module.body:
         new_body.append(statement)
         continue
 
-    # Four transform calls cover three concrete common cleanup statements. The
-    # larger successful-resume transform above remains separate.
     if "CleanupStagingForCompletedJob(response);" in old:
         occurrence = seen.get("cleanup", 0)
         seen["cleanup"] = occurrence + 1
@@ -98,8 +91,6 @@ for statement in module.body:
             new_body.append(statement)
         continue
 
-    # Two common resume summary writes share the same indentation. Successful
-    # resume is handled by the dedicated block above.
     if old == "                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);\n":
         convert_to_count(call, 2)
         new_body.append(statement)
@@ -116,7 +107,7 @@ required_counts = {
     "persist": 2,
     "summary": 2,
     "failure-summary": 2,
-    "cleanup": 4,
+    "cleanup": 3,
     "resume-success": 1,
     "parquet-read": 1,
 }
