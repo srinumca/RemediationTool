@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using RemediationTool.Application.Repositories;
@@ -8,33 +8,32 @@ namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
 /// JSON file-backed implementation of IFileFindingRepository.
-/// Used for local development only (Persistence:Provider = Json).
+/// Used for local development only.
 /// </summary>
 public sealed class JsonFileFindingRepository : IFileFindingRepository
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
     private readonly string _filePath;
     private readonly object _lock = new();
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
 
     public JsonFileFindingRepository(IConfiguration configuration)
     {
         var rootPath = configuration["Persistence:JsonRootPath"] ?? "storage";
         _filePath = Path.Combine(rootPath, "metadata.json");
 
-        var dir = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
-        if (!File.Exists(_filePath)) File.WriteAllText(_filePath, "[]");
-    }
+        var directory = Path.GetDirectoryName(_filePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
 
-    // ── Write ─────────────────────────────────────────────────────────────────
+        if (!File.Exists(_filePath))
+            JsonFileHelper.WriteAllText(_filePath, "[]");
+    }
 
     public void Add(FileFinding finding)
     {
+        ArgumentNullException.ThrowIfNull(finding);
+
         lock (_lock)
         {
             var all = ReadAll();
@@ -45,54 +44,87 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
 
     public void AddRange(IReadOnlyList<FileFinding> findings)
     {
-        if (findings == null || findings.Count == 0) return;
+        if (findings == null || findings.Count == 0)
+            return;
+
         lock (_lock)
         {
             var all = ReadAll();
-            all.AddRange(findings);
+            all.EnsureCapacity(all.Count + findings.Count);
+
+            foreach (var finding in findings)
+                all.Add(finding);
+
             WriteAll(all);
         }
     }
 
     public void Update(FileFinding finding)
     {
+        ArgumentNullException.ThrowIfNull(finding);
+
         lock (_lock)
         {
             var all = ReadAll();
-            var index = all.FindIndex(x => x.Id == finding.Id);
-            if (index >= 0) all[index] = finding; else all.Add(finding);
+            var index = all.FindIndex(existing => existing.Id == finding.Id);
+
+            if (index >= 0)
+                all[index] = finding;
+            else
+                all.Add(finding);
+
             WriteAll(all);
         }
     }
 
-    // ── Single-record lookups ─────────────────────────────────────────────────
-
     public FileFinding? GetById(Guid id)
     {
-        lock (_lock) { return ReadAll().FirstOrDefault(x => x.Id == id); }
+        lock (_lock)
+        {
+            return ReadAll().Find(finding => finding.Id == id);
+        }
     }
 
     public FileFinding? GetLatestBySourceRecordId(string sourceRecordId)
     {
+        if (string.IsNullOrWhiteSpace(sourceRecordId))
+            return null;
+
         lock (_lock)
         {
-            return ReadAll()
-                .Where(x => string.Equals(x.SourceRecordId, sourceRecordId, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.LastUpdateDateUtc)
-                .FirstOrDefault();
+            FileFinding? latest = null;
+
+            foreach (var finding in ReadAll())
+            {
+                if (!string.Equals(
+                        finding.SourceRecordId,
+                        sourceRecordId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (latest == null || finding.LastUpdateDateUtc > latest.LastUpdateDateUtc)
+                    latest = finding;
+            }
+
+            return latest;
         }
     }
-
-    // ── Filtered queries ──────────────────────────────────────────────────────
 
     public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
     {
         lock (_lock)
         {
-            return ReadAll()
-                .Where(x => string.Equals(x.IngestionJobId, ingestionJobId, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(x => x.LoadDateUtc)
-                .ToList();
+            var result = Filter(
+                ReadAll(),
+                finding => string.Equals(
+                    finding.IngestionJobId,
+                    ingestionJobId,
+                    StringComparison.OrdinalIgnoreCase));
+
+            result.Sort(static (left, right) => left.LoadDateUtc.CompareTo(right.LoadDateUtc));
+            return result;
         }
     }
 
@@ -100,10 +132,19 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return ReadAll()
-                .Where(x => string.Equals(x.FindingType, findingType, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(x => x.FindingFileName)
-                .ToList();
+            var result = Filter(
+                ReadAll(),
+                finding => string.Equals(
+                    finding.FindingType,
+                    findingType,
+                    StringComparison.OrdinalIgnoreCase));
+
+            result.Sort(static (left, right) =>
+                string.Compare(
+                    left.FindingFileName,
+                    right.FindingFileName,
+                    StringComparison.OrdinalIgnoreCase));
+            return result;
         }
     }
 
@@ -111,10 +152,19 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return ReadAll()
-                .Where(x => string.Equals(x.OriginatingDataSystem, dataSystem, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(x => x.FindingFileName)
-                .ToList();
+            var result = Filter(
+                ReadAll(),
+                finding => string.Equals(
+                    finding.OriginatingDataSystem,
+                    dataSystem,
+                    StringComparison.OrdinalIgnoreCase));
+
+            result.Sort(static (left, right) =>
+                string.Compare(
+                    left.FindingFileName,
+                    right.FindingFileName,
+                    StringComparison.OrdinalIgnoreCase));
+            return result;
         }
     }
 
@@ -122,47 +172,91 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return ReadAll()
-                .Where(x => string.Equals(x.SourceRecordId, sourceRecordId, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(x => x.LastUpdateDateUtc)
-                .ToList();
+            var result = Filter(
+                ReadAll(),
+                finding => string.Equals(
+                    finding.SourceRecordId,
+                    sourceRecordId,
+                    StringComparison.OrdinalIgnoreCase));
+
+            result.Sort(static (left, right) =>
+                left.LastUpdateDateUtc.CompareTo(right.LastUpdateDateUtc));
+            return result;
         }
     }
 
     public List<FileFinding> GetAll()
     {
-        lock (_lock) { return ReadAll(); }
-    }
-
-    // ── Paged query ───────────────────────────────────────────────────────────
-
-    public PagedResult<FileFinding> GetLatestPaged(
-        int pageSize, string? lastEvaluatedKey = null, string? findingType = null)
-    {
         lock (_lock)
         {
-            var query = ReadAll().AsEnumerable();
-            if (!string.IsNullOrWhiteSpace(findingType))
-                query = query.Where(x => string.Equals(x.FindingType, findingType, StringComparison.OrdinalIgnoreCase));
-
-            var all = query.OrderBy(x => x.FindingFileName).ToList();
-            var skip = int.TryParse(lastEvaluatedKey, out var s) ? s : 0;
-            var page = all.Skip(skip).Take(pageSize).ToList();
-            var nextKey = skip + page.Count < all.Count ? (skip + page.Count).ToString() : null;
-
-            return new PagedResult<FileFinding> { Items = page, NextPageKey = nextKey };
+            return ReadAll();
         }
     }
 
-    // ── Aggregates ────────────────────────────────────────────────────────────
+    public PagedResult<FileFinding> GetLatestPaged(
+        int pageSize,
+        string? lastEvaluatedKey = null,
+        string? findingType = null)
+    {
+        lock (_lock)
+        {
+            var all = string.IsNullOrWhiteSpace(findingType)
+                ? ReadAll()
+                : Filter(
+                    ReadAll(),
+                    finding => string.Equals(
+                        finding.FindingType,
+                        findingType,
+                        StringComparison.OrdinalIgnoreCase));
+
+            all.Sort(static (left, right) =>
+                string.Compare(
+                    left.FindingFileName,
+                    right.FindingFileName,
+                    StringComparison.OrdinalIgnoreCase));
+
+            var skip = int.TryParse(lastEvaluatedKey, out var parsedSkip)
+                ? Math.Max(0, parsedSkip)
+                : 0;
+            var take = Math.Max(0, pageSize);
+
+            if (skip >= all.Count || take == 0)
+            {
+                return new PagedResult<FileFinding>
+                {
+                    Items = new List<FileFinding>(),
+                    NextPageKey = null
+                };
+            }
+
+            var pageCount = Math.Min(take, all.Count - skip);
+            var page = all.GetRange(skip, pageCount);
+            var nextOffset = skip + pageCount;
+
+            return new PagedResult<FileFinding>
+            {
+                Items = page,
+                NextPageKey = nextOffset < all.Count ? nextOffset.ToString() : null
+            };
+        }
+    }
 
     public IReadOnlyDictionary<string, int> GetCountByFindingType()
     {
         lock (_lock)
         {
-            return ReadAll()
-                .GroupBy(x => x.FindingType)
-                .ToDictionary(g => g.Key, g => g.Count());
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var finding in ReadAll())
+            {
+                var findingType = finding.FindingType ?? string.Empty;
+                if (counts.TryGetValue(findingType, out var currentCount))
+                    counts[findingType] = currentCount + 1;
+                else
+                    counts[findingType] = 1;
+            }
+
+            return counts;
         }
     }
 
@@ -170,22 +264,63 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
     {
         lock (_lock)
         {
-            return ReadAll()
-                .Count(x => string.Equals(x.FindingType, findingType, StringComparison.OrdinalIgnoreCase));
+            var count = 0;
+            foreach (var finding in ReadAll())
+            {
+                if (string.Equals(
+                        finding.FindingType,
+                        findingType,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
     }
 
-    // ── Internal ──────────────────────────────────────────────────────────────
-
     private List<FileFinding> ReadAll()
     {
-        var json = File.ReadAllText(_filePath);
-        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]")
+        var json = JsonFileHelper.ReadAllText(_filePath);
+        if (string.IsNullOrWhiteSpace(json))
             return new List<FileFinding>();
+
+        var trimmed = json.AsSpan().Trim();
+        if (trimmed.SequenceEqual("[]".AsSpan()))
+            return new List<FileFinding>();
+
         return JsonSerializer.Deserialize<List<FileFinding>>(json, JsonOptions)
                ?? new List<FileFinding>();
     }
 
     private void WriteAll(List<FileFinding> findings)
-        => File.WriteAllText(_filePath, JsonSerializer.Serialize(findings, JsonOptions));
+        => JsonFileHelper.WriteAllText(
+            _filePath,
+            JsonSerializer.Serialize(findings, JsonOptions));
+
+    private static List<FileFinding> Filter(
+        List<FileFinding> findings,
+        Func<FileFinding, bool> predicate)
+    {
+        var result = new List<FileFinding>();
+
+        foreach (var finding in findings)
+        {
+            if (predicate(finding))
+                result.Add(finding);
+        }
+
+        return result;
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
 }
