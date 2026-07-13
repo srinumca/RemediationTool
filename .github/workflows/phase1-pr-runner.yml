@@ -31,14 +31,16 @@ jobs:
           set +e
           python3 - <<'PY' > phase1-apply.log 2>&1
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/phase1-apply-validate.yml').read_text(encoding='utf-8')
           marker_start = "          python3 - <<'PY'\n"
           marker_end = "\n          PY\n\n      - name: Restore"
           start = workflow.index(marker_start) + len(marker_start)
           end = workflow.index(marker_end, start)
-          script = textwrap.dedent(workflow[start:end])
+          lines = workflow[start:end].splitlines()
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in lines)
           exec(compile(script, 'phase1-apply-script', 'exec'))
           PY
           code=$?
@@ -75,8 +77,10 @@ jobs:
         run: |
           rm .github/workflows/phase1-apply-validate.yml
           rm .github/workflows/phase1-pr-runner.yml
+          rm -f phase1-apply.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u phase1-apply.log
           git add src/RemediationTool.Application/Options/IngestionProcessingOptions.cs \
                   src/RemediationTool.Application/Services/IngestionService.cs \
                   src/RemediationTool.Application/Services/IngestionResumeStoreCoordinator.cs \
