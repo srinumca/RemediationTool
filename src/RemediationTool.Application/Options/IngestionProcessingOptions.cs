@@ -22,12 +22,42 @@ public class IngestionProcessingOptions
     public int BatchPersistenceRetryDelayMilliseconds { get; set; } = 1000;
 
     /// <summary>
-    /// Maximum number of DynamoDB BatchWriteItem requests allowed to run at the
-    /// same time. A bounded value improves large-file throughput without
-    /// creating unbounded pressure or changing checkpoint semantics.
-    /// Set to 1 to restore sequential behavior.
+    /// Existing compatibility setting retained for deployments that already use it.
+    /// New Phase 2 code prefers DynamoDbWriteConcurrency when it is greater than zero.
     /// </summary>
     public int DynamoDbMaxConcurrentBatchWrites { get; set; } = 4;
+
+    /// <summary>
+    /// Enables fully awaited 25-item DynamoDB writes with bounded concurrency.
+    /// Enabled by default to preserve the bounded-write behavior already delivered
+    /// by the previously merged ingestion optimization PRs.
+    /// </summary>
+    public bool EnableBoundedDynamoDbConcurrency { get; set; } = true;
+
+    /// <summary>
+    /// Maximum concurrent DynamoDB BatchWriteItem requests for findings, rejected
+    /// rows and staging records. Values are clamped to 1..16.
+    /// </summary>
+    public int DynamoDbWriteConcurrency { get; set; } = 4;
+
+    /// <summary>
+    /// Number of rejected rows converted and submitted to the repository at one time.
+    /// Repository implementations still split these into DynamoDB's 25-item requests.
+    /// </summary>
+    public int RejectedRowBatchSize { get; set; } = 5000;
+
+    /// <summary>
+    /// Enables direct S3 streaming for CSV and temporary seekable files for XLSX
+    /// and Parquet operations. Disabled by default until environment load testing
+    /// confirms equivalent behavior.
+    /// </summary>
+    public bool EnableHighVolumeStreaming { get; set; } = false;
+
+    /// <summary>
+    /// Keeps the existing buffered/synchronous path available if an async or streaming
+    /// implementation is not available. This remains enabled through production rollout.
+    /// </summary>
+    public bool LegacyFallbackEnabled { get; set; } = true;
 
     public bool EnableParquetWorkingFile { get; set; } = true;
 
@@ -76,4 +106,16 @@ public class IngestionProcessingOptions
     public int MaxUploadFileSizeMb { get; set; } = 500;
 
     public long MaxUploadFileSizeBytes => MaxUploadFileSizeMb * 1024L * 1024L;
+
+    public int ResolveDynamoDbWriteConcurrency()
+    {
+        var configured = DynamoDbWriteConcurrency > 0
+            ? DynamoDbWriteConcurrency
+            : DynamoDbMaxConcurrentBatchWrites;
+
+        return Math.Clamp(configured, 1, 16);
+    }
+
+    public int ResolveRejectedRowBatchSize()
+        => Math.Clamp(RejectedRowBatchSize, 25, MaxBatchSize > 0 ? MaxBatchSize : 10000);
 }
