@@ -55,21 +55,40 @@ jobs:
         run: dotnet restore RemediationTool.sln
 
       - name: Build
+        id: build
         if: steps.apply.outputs.exit_code == '0'
-        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+        shell: bash
+        run: |
+          set +e
+          dotnet build RemediationTool.sln --configuration Release --no-restore > phase2-build.log 2>&1
+          code=$?
+          cat phase2-build.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit build diagnostics
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f phase2-build.log
+          git commit -m "Capture Phase 2 build failure"
+          git push origin HEAD:agent/phase2-asynchronous-bounded-io
+          exit 1
 
       - name: Test
-        if: steps.apply.outputs.exit_code == '0'
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0'
         run: dotnet test RemediationTool.sln --configuration Release --no-build
 
       - name: Commit validated Phase 2 transformations
-        if: steps.apply.outputs.exit_code == '0'
+        if: steps.apply.outputs.exit_code == '0' && steps.build.outputs.exit_code == '0'
         shell: bash
         run: |
           rm .github/workflows/phase2-apply-validate.yml
           rm tools/apply_phase2_ingestion.py
           rm tools/normalize_phase2_transform_script.py
-          rm -f phase2-apply.log
+          rm -f phase2-apply.log phase2-build.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
