@@ -1,0 +1,102 @@
+name: Validate Phase 1 compatibility defaults
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Phase 1 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase1-parquet-first-ingestion
+          fetch-depth: 0
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Apply compatibility-safe defaults
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file_path = Path(path)
+              text = file_path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'Expected one match in {path}, found {count}')
+              file_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src/RemediationTool.Application/Options/IngestionProcessingOptions.cs',
+              '''    /// <summary>
+    /// Uses a verified Parquet working file as the normal resume source and avoids
+    /// duplicating every valid finding into the staging table.
+    /// </summary>
+    public bool UseParquetAsPrimaryResumeStore { get; set; } = true;
+''',
+              '''    /// <summary>
+    /// Uses a verified Parquet working file as the normal resume source and avoids
+    /// duplicating every valid finding into the staging table. Disabled by default
+    /// so the existing dual-store recovery behavior remains unchanged until the
+    /// Parquet-first path is validated in the target AWS environment.
+    /// </summary>
+    public bool UseParquetAsPrimaryResumeStore { get; set; } = false;
+''')
+
+          replace_once(
+              'src/RemediationTool.API/appsettings.json',
+              '    "UseParquetAsPrimaryResumeStore": true,',
+              '    "UseParquetAsPrimaryResumeStore": false,')
+
+          replace_once(
+              'src/RemediationTool.Application/Services/IngestionService.cs',
+              '''    private async Task<bool> PrepareResumeStoreAsync(
+        IngestionUploadResponse response,
+        IngestionJobAudit jobAudit,
+        IReadOnlyList<FileFinding> validFindings)
+''',
+              '''    private async Task<bool> PrepareResumeStoreAsync(
+        IngestionUploadResponse response,
+        IngestionJobAudit jobAudit,
+        List<FileFinding> validFindings)
+''')
+
+          replace_once(
+              'src/RemediationTool.Application/Services/IngestionService.cs',
+              '            writeStaging: () => _stagingRepository.SaveValidFindings(response.JobId, validFindings.ToList()),',
+              '            writeStaging: () => _stagingRepository.SaveValidFindings(response.JobId, validFindings),')
+          PY
+
+      - name: Restore
+        run: dotnet restore RemediationTool.sln
+
+      - name: Build
+        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RemediationTool.sln --configuration Release --no-build
+
+      - name: Commit validated safety adjustments
+        shell: bash
+        run: |
+          rm .github/workflows/phase1-safety-validation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/RemediationTool.Application/Options/IngestionProcessingOptions.cs \
+                  src/RemediationTool.API/appsettings.json \
+                  src/RemediationTool.Application/Services/IngestionService.cs \
+                  .github/workflows/phase1-safety-validation.yml
+          git commit -m "Keep Phase 1 rollout compatibility-safe by default"
+          git push origin HEAD:agent/phase1-parquet-first-ingestion
