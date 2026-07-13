@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
 
+# Applies the two-line allocation cleanup, validates it, then removes itself.
 jobs:
   apply-and-validate:
     runs-on: ubuntu-latest
