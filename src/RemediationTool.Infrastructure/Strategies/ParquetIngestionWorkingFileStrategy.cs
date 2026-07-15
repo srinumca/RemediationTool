@@ -6,6 +6,7 @@ using RemediationTool.Application.Constants;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Infrastructure.Storage;
 
 namespace RemediationTool.Infrastructure.Strategies;
 
@@ -46,7 +47,9 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             "[PARQUET_WRITE_START] JobId:{JobId}, Path:{Path}, Records:{Records}, RowGroupSize:{RowGroupSize}",
             jobId, workingFilePath, validFindings.Count, rowGroupSize);
 
-        await using var parquetStream = new MemoryStream();
+        await using Stream parquetStream = _options.EnableHighVolumeStreaming
+            ? TemporarySeekableStream.Create()
+            : new MemoryStream();
 
         await ParquetSerializer.SerializeAsync(
             validFindings.Select(ToParquetRow),
@@ -61,10 +64,10 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
         }
 
         parquetStream.Position = 0;
-        await _storage.UploadAsync(workingFilePath, parquetStream);
+        await _storage.UploadAsync(workingFilePath, parquetStream, cancellationToken);
 
         if (_options.ValidateWorkingFileAfterWrite
-            && !await _storage.ExistsAsync(workingFilePath))
+            && !await _storage.ExistsAsync(workingFilePath, cancellationToken))
         {
             throw new IOException(
                 $"Parquet working file verification failed for job {jobId}. The uploaded object was not found at '{workingFilePath}'.");
@@ -101,7 +104,9 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             "[PARQUET_RESUME_READ_START] Path:{Path}, LastProcessedRecordCount:{LastProcessedRecordCount}",
             workingFilePath, lastProcessedRecordCount);
 
-        await using var parquetStream = await _storage.DownloadAsync(workingFilePath);
+        await using var parquetStream = await OpenSeekableReadAsync(
+            workingFilePath,
+            cancellationToken);
         if (parquetStream.CanSeek)
             parquetStream.Position = 0;
 
@@ -128,6 +133,28 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             workingFilePath, rows.Count, findings.Count);
 
         return findings;
+    }
+
+    private Task<Stream> OpenSeekableReadAsync(
+        string workingFilePath,
+        CancellationToken cancellationToken)
+    {
+        if (_options.EnableHighVolumeStreaming
+            && _storage is IStreamingStorageService streamingStorage)
+        {
+            return streamingStorage.OpenSeekableReadAsync(
+                workingFilePath,
+                cancellationToken);
+        }
+
+        if (_options.EnableHighVolumeStreaming
+            && !_options.LegacyFallbackEnabled)
+        {
+            throw new InvalidOperationException(
+                "High-volume Parquet reading requires streaming storage, but no compatible implementation is registered and legacy fallback is disabled.");
+        }
+
+        return _storage.DownloadAsync(workingFilePath, cancellationToken);
     }
 
     private static List<ParquetFindingRow> ExtractRows(object? deserializationResult)

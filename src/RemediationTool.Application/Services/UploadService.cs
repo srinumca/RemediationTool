@@ -41,9 +41,12 @@ public class UploadService
         _processingOptions = processingOptions.Value;
     }
 
-    public async Task<UploadResponse> UploadAsync(IFormFile file)
+    public async Task<UploadResponse> UploadAsync(
+        IFormFile file,
+        CancellationToken cancellationToken = default)
     {
         ValidateFile(file);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var uploadedAtUtc = DateTime.UtcNow;
         var reportUid = IngestionJobIdGenerator.Generate();
@@ -72,7 +75,7 @@ public class UploadService
 
         await using (var fileStream = file.OpenReadStream())
         {
-            await _storage.UploadAsync(sourceFilePath, fileStream);
+            await _storage.UploadAsync(sourceFilePath, fileStream, cancellationToken);
         }
 
         _logger.LogInformation(
@@ -88,7 +91,8 @@ public class UploadService
             fileFormat,
             s3FolderPath,
             sourceFilePath,
-            uploadedAtUtc);
+            uploadedAtUtc,
+            cancellationToken);
 
         var jobAudit = new IngestionJobAudit
         {
@@ -206,7 +210,8 @@ public class UploadService
         string fileFormat,
         string s3FolderPath,
         string sourceFilePath,
-        DateTime uploadedAtUtc)
+        DateTime uploadedAtUtc,
+        CancellationToken cancellationToken)
     {
         var metadata = new
         {
@@ -221,9 +226,13 @@ public class UploadService
         };
 
         await using var stream = new MemoryStream();
-        await JsonSerializer.SerializeAsync(stream, metadata, MetadataJsonOptions);
+        await JsonSerializer.SerializeAsync(
+            stream,
+            metadata,
+            MetadataJsonOptions,
+            cancellationToken);
         stream.Position = 0;
-        await _storage.UploadAsync(metadataPath, stream);
+        await _storage.UploadAsync(metadataPath, stream, cancellationToken);
 
         _logger.LogInformation(
             "[UPLOAD S3] ReportUid: {ReportUid} — initial metadata written to S3. Key: {Key}",

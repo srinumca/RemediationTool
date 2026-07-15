@@ -13,9 +13,11 @@ namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
 /// Preserves staging as a complete resume fallback while accelerating its
-/// write and cleanup paths with bounded DynamoDB concurrency.
+/// write, read and cleanup paths with fully awaited bounded DynamoDB I/O.
 /// </summary>
-public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionStagingRepository
+public sealed class ConcurrentDynamoDbIngestionStagingRepository :
+    IIngestionStagingRepository,
+    IAsyncIngestionStagingRepository
 {
     private const int DynamoDbBatchLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
@@ -24,6 +26,7 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
     private readonly DynamoDbIngestionStagingRepository _inner;
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
+    private readonly bool _enableBoundedConcurrency;
     private readonly int _maxConcurrentBatchWrites;
     private readonly ILogger<ConcurrentDynamoDbIngestionStagingRepository> _logger;
 
@@ -37,14 +40,18 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
         _inner = inner;
         _dynamoDb = dynamoDb;
         _tableName = dynamoDbOptions.Value.StagedFindingsTableName;
-        _maxConcurrentBatchWrites = Math.Clamp(
-            processingOptions.Value.DynamoDbMaxConcurrentBatchWrites,
-            1,
-            16);
+        _enableBoundedConcurrency = processingOptions.Value.EnableBoundedDynamoDbConcurrency;
+        _maxConcurrentBatchWrites = processingOptions.Value.ResolveDynamoDbWriteConcurrency();
         _logger = logger;
     }
 
     public void SaveValidFindings(string jobId, List<FileFinding> validFindings)
+        => SaveValidFindingsAsync(jobId, validFindings).GetAwaiter().GetResult();
+
+    public async Task SaveValidFindingsAsync(
+        string jobId,
+        IReadOnlyList<FileFinding> validFindings,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             throw new ArgumentException("JobId is required.", nameof(jobId));
@@ -52,11 +59,22 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
         if (validFindings == null || validFindings.Count == 0)
             return;
 
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+        {
+            _inner.SaveValidFindings(
+                jobId,
+                validFindings as List<FileFinding>
+                ?? validFindings.ToList());
+            return;
+        }
+
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
-            DeleteByJobId(jobId);
+            await DeleteByJobIdAsync(jobId, cancellationToken);
 
             var nowUtc = DateTime.UtcNow;
             var createdAtText = nowUtc.ToString("O", CultureInfo.InvariantCulture);
@@ -64,11 +82,11 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
                 .ToUnixTimeSeconds()
                 .ToString(CultureInfo.InvariantCulture);
 
-            BoundedBatchExecutor.Execute(
+            await BoundedBatchExecutor.ExecuteAsync(
                 validFindings.Count,
                 DynamoDbBatchLimit,
                 _maxConcurrentBatchWrites,
-                async (range, cancellationToken) =>
+                async (range, token) =>
                 {
                     var requests = new List<WriteRequest>(range.Count);
                     var endExclusive = range.StartIndex + range.Count;
@@ -106,8 +124,9 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
                         validFindings.Count,
                         MaxUnprocessedItemRetryAttempts,
                         _logger,
-                        cancellationToken);
-                });
+                        token);
+                },
+                cancellationToken);
 
             _logger.LogInformation(
                 "[STAGING_SAVE_COMPLETE] JobId:{JobId}, Records:{Records}, Batches:{Batches}, MaxConcurrency:{MaxConcurrency}, ElapsedMs:{ElapsedMs}",
@@ -116,6 +135,15 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
                 CalculateBatchCount(validFindings.Count),
                 _maxConcurrentBatchWrites,
                 stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "[STAGING_SAVE_CANCELLED] JobId:{JobId}, Records:{Records}, ElapsedMs:{ElapsedMs}",
+                jobId,
+                validFindings.Count,
+                stopwatch.ElapsedMilliseconds);
+            throw;
         }
         catch (Exception ex)
         {
@@ -133,23 +161,136 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
     public List<FileFinding> GetValidFindingsAfter(
         string jobId,
         int lastProcessedRecordCount)
-        => _inner.GetValidFindingsAfter(jobId, lastProcessedRecordCount);
+        => GetValidFindingsAfterAsync(jobId, lastProcessedRecordCount)
+            .GetAwaiter()
+            .GetResult();
+
+    public async Task<List<FileFinding>> GetValidFindingsAfterAsync(
+        string jobId,
+        int lastProcessedRecordCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return new List<FileFinding>();
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+            return _inner.GetValidFindingsAfter(jobId, lastProcessedRecordCount);
+
+        _logger.LogInformation(
+            "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
+            jobId,
+            lastProcessedRecordCount);
+
+        var findings = new List<FileFinding>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var response = await _dynamoDb.QueryAsync(
+                new QueryRequest
+                {
+                    TableName = _tableName,
+                    KeyConditionExpression = "jobId = :jobId AND sequenceNumber > :lastSeq",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":jobId"] = new AttributeValue { S = jobId },
+                        [":lastSeq"] = new AttributeValue
+                        {
+                            N = lastProcessedRecordCount.ToString(CultureInfo.InvariantCulture)
+                        }
+                    },
+                    ScanIndexForward = true,
+                    ExclusiveStartKey = lastKey
+                },
+                cancellationToken);
+
+            findings.EnsureCapacity(findings.Count + response.Items.Count);
+            foreach (var item in response.Items)
+            {
+                if (item.TryGetValue("finding", out var findingAttribute)
+                    && findingAttribute.M != null)
+                {
+                    findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttribute.M));
+                }
+            }
+
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+        }
+        while (lastKey != null);
+
+        _logger.LogInformation(
+            "[STAGING_RESUME_READ_COMPLETE] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}, Records:{Records}",
+            jobId,
+            lastProcessedRecordCount,
+            findings.Count);
+
+        return findings;
+    }
 
     public int CountByJobId(string jobId)
-        => _inner.CountByJobId(jobId);
+        => CountByJobIdAsync(jobId).GetAwaiter().GetResult();
+
+    public async Task<int> CountByJobIdAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return 0;
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+            return _inner.CountByJobId(jobId);
+
+        var count = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(
+                new QueryRequest
+                {
+                    TableName = _tableName,
+                    KeyConditionExpression = "jobId = :jobId",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":jobId"] = new AttributeValue { S = jobId }
+                    },
+                    Select = Select.COUNT,
+                    ExclusiveStartKey = lastKey
+                },
+                cancellationToken);
+
+            count += response.Count ?? 0;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+        }
+        while (lastKey != null);
+
+        return count;
+    }
 
     public void DeleteByJobId(string jobId)
+        => DeleteByJobIdAsync(jobId).GetAwaiter().GetResult();
+
+    public async Task DeleteByJobIdAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return;
 
-        DeleteByJobIdAsync(jobId).GetAwaiter().GetResult();
-    }
+        cancellationToken.ThrowIfCancellationRequested();
 
-    private async Task DeleteByJobIdAsync(
-        string jobId,
-        CancellationToken cancellationToken = default)
-    {
+        if (!_enableBoundedConcurrency)
+        {
+            _inner.DeleteByJobId(jobId);
+            return;
+        }
+
         var stopwatch = Stopwatch.StartNew();
         Dictionary<string, AttributeValue>? lastKey = null;
         var deletedCount = 0;
@@ -174,9 +315,7 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
                 },
                 cancellationToken);
 
-            lastKey = response.LastEvaluatedKey?.Count > 0
-                ? response.LastEvaluatedKey
-                : null;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
 
             if (response.Items.Count == 0)
                 continue;
@@ -232,4 +371,8 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository : IIngestionSta
 
     private static int CalculateBatchCount(int recordCount)
         => (recordCount + DynamoDbBatchLimit - 1) / DynamoDbBatchLimit;
+
+    private static Dictionary<string, AttributeValue>? GetNextKey(
+        Dictionary<string, AttributeValue>? lastEvaluatedKey)
+        => lastEvaluatedKey?.Count > 0 ? lastEvaluatedKey : null;
 }

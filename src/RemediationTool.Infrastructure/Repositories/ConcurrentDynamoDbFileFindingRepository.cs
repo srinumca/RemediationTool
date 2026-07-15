@@ -14,7 +14,9 @@ namespace RemediationTool.Infrastructure.Repositories;
 /// Preserves the existing repository behavior while accelerating large
 /// ingestion writes with bounded DynamoDB concurrency.
 /// </summary>
-public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingRepository
+public sealed class ConcurrentDynamoDbFileFindingRepository :
+    IFileFindingRepository,
+    IAsyncFileFindingRepository
 {
     private const int DynamoDbBatchLimit = 25;
     private const int MaxUnprocessedItemRetryAttempts = 5;
@@ -22,6 +24,7 @@ public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingReposi
     private readonly DynamoDbFileFindingRepository _inner;
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly string _tableName;
+    private readonly bool _enableBoundedConcurrency;
     private readonly int _maxConcurrentBatchWrites;
     private readonly ILogger<ConcurrentDynamoDbFileFindingRepository> _logger;
 
@@ -35,10 +38,8 @@ public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingReposi
         _inner = inner;
         _dynamoDb = dynamoDb;
         _tableName = dynamoDbOptions.Value.FindingsTableName;
-        _maxConcurrentBatchWrites = Math.Clamp(
-            processingOptions.Value.DynamoDbMaxConcurrentBatchWrites,
-            1,
-            16);
+        _enableBoundedConcurrency = processingOptions.Value.EnableBoundedDynamoDbConcurrency;
+        _maxConcurrentBatchWrites = processingOptions.Value.ResolveDynamoDbWriteConcurrency();
         _logger = logger;
     }
 
@@ -46,20 +47,33 @@ public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingReposi
         => _inner.Add(finding);
 
     public void AddRange(IReadOnlyList<FileFinding> findings)
+        => AddRangeAsync(findings).GetAwaiter().GetResult();
+
+    public async Task AddRangeAsync(
+        IReadOnlyList<FileFinding> findings,
+        CancellationToken cancellationToken = default)
     {
         if (findings == null || findings.Count == 0)
             return;
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+        {
+            _inner.AddRange(findings);
+            return;
+        }
 
         var stopwatch = Stopwatch.StartNew();
         var totalBatchCount = CalculateBatchCount(findings.Count);
 
         try
         {
-            BoundedBatchExecutor.Execute(
+            await BoundedBatchExecutor.ExecuteAsync(
                 findings.Count,
                 DynamoDbBatchLimit,
                 _maxConcurrentBatchWrites,
-                async (range, cancellationToken) =>
+                async (range, token) =>
                 {
                     var requests = new List<WriteRequest>(range.Count);
                     var endExclusive = range.StartIndex + range.Count;
@@ -84,8 +98,9 @@ public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingReposi
                         findings.Count,
                         MaxUnprocessedItemRetryAttempts,
                         _logger,
-                        cancellationToken);
-                });
+                        token);
+                },
+                cancellationToken);
 
             _logger.LogInformation(
                 "[DYNAMODB_FINDINGS_WRITE_COMPLETE] Table:{Table}, Records:{Records}, Batches:{Batches}, MaxConcurrency:{MaxConcurrency}, ElapsedMs:{ElapsedMs}",
@@ -94,6 +109,15 @@ public sealed class ConcurrentDynamoDbFileFindingRepository : IFileFindingReposi
                 totalBatchCount,
                 _maxConcurrentBatchWrites,
                 stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "[DYNAMODB_FINDINGS_WRITE_CANCELLED] Table:{Table}, Records:{Records}, ElapsedMs:{ElapsedMs}",
+                _tableName,
+                findings.Count,
+                stopwatch.ElapsedMilliseconds);
+            throw;
         }
         catch (Exception ex)
         {

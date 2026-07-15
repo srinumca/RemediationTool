@@ -99,8 +99,11 @@ public class IngestionService : IIngestionService
             .Build();
     }
 
-    public async Task<IngestionUploadResponse> ProcessAsync(IFormFile file)
+    public async Task<IngestionUploadResponse> ProcessAsync(
+        IFormFile file,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var startedAtUtc = DateTime.UtcNow;
         var reportUid = IngestionJobIdGenerator.Generate();
 
@@ -166,7 +169,7 @@ public class IngestionService : IIngestionService
             var sourceUploadStopwatch = Stopwatch.StartNew();
             await using (var sourceStream = file.OpenReadStream())
             {
-                await _storage.UploadAsync(sourceFilePath, sourceStream);
+                await _storage.UploadAsync(sourceFilePath, sourceStream, cancellationToken);
             }
             LogStageDuration(reportUid, "SourceUpload", sourceUploadStopwatch, fileSizeBytes);
 
@@ -182,29 +185,36 @@ public class IngestionService : IIngestionService
                     reportUid,
                     inboundFileName,
                     uploadedBy,
-                    loadTime);
+                    loadTime,
+                    cancellationToken);
             }
             LogStageDuration(reportUid, "ParseAndValidate", parseStopwatch, parseResult.TotalRecords);
 
             ApplyParseResult(response, parseResult);
 
             var rejectedRowsStopwatch = Stopwatch.StartNew();
-            PersistRejectedRows(reportUid, inboundFileName, parseResult.RejectedRows);
+            await PersistRejectedRowsAsync(
+                reportUid,
+                inboundFileName,
+                parseResult.RejectedRows,
+                cancellationToken);
             LogStageDuration(reportUid, "RejectedRowPersistence", rejectedRowsStopwatch, parseResult.RejectedRows.Count);
 
             var resumeStoreStopwatch = Stopwatch.StartNew();
             var stagingWritten = await PrepareResumeStoreAsync(
                 response,
                 jobAudit,
-                parseResult.ValidFindings);
+                parseResult.ValidFindings,
+                cancellationToken);
             LogStageDuration(reportUid, "ResumeStorePreparation", resumeStoreStopwatch, parseResult.ValidFindings.Count);
 
             var targetPersistenceStopwatch = Stopwatch.StartNew();
-            PersistValidFindingsInBatches(
+            await PersistValidFindingsInBatchesAsync(
                 parseResult.ValidFindings,
                 response,
                 jobAudit,
-                configuredBatchSize);
+                configuredBatchSize,
+                cancellationToken);
             LogStageDuration(reportUid, "TargetPersistence", targetPersistenceStopwatch, parseResult.ValidFindings.Count);
 
             CompleteResponse(response);
@@ -213,7 +223,8 @@ public class IngestionService : IIngestionService
             var summaryStopwatch = Stopwatch.StartNew();
             var storedMetadataPath = await StoreProcessingSummaryAsync(
                 response,
-                parseResult.RejectedRows);
+                parseResult.RejectedRows,
+                cancellationToken);
             response.MetadataJsonPath = storedMetadataPath;
             response.ProcessingSummaryPath = storedMetadataPath;
             LogStageDuration(reportUid, "ProcessingSummary", summaryStopwatch, parseResult.RejectedRows.Count);
@@ -222,7 +233,7 @@ public class IngestionService : IIngestionService
             if (stagingWritten)
             {
                 var cleanupStopwatch = Stopwatch.StartNew();
-                CleanupStagingForCompletedJob(response);
+                await CleanupStagingForCompletedJobAsync(response, cancellationToken);
                 LogStageDuration(reportUid, "StagingCleanup", cleanupStopwatch, parseResult.ValidFindings.Count);
             }
             else
@@ -245,6 +256,11 @@ public class IngestionService : IIngestionService
 
             return response;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("[INGESTION_CANCELLED] ReportUid:{ReportUid}", reportUid);
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[INGESTION_ERROR] ReportUid:{ReportUid}", reportUid);
@@ -255,13 +271,20 @@ public class IngestionService : IIngestionService
             response.SourceSystem ??= "Unknown";
 
             TryUpdateFailureState(response, jobAudit, ex.Message);
-            await TryStoreProcessingSummaryAsync(response, parseResult?.RejectedRows);
+            await TryStoreProcessingSummaryAsync(
+                response,
+                parseResult?.RejectedRows,
+                cancellationToken);
             return response;
         }
     }
 
-    public async Task<IngestionUploadResponse> ResumeAsync(string jobId)
+    public async Task<IngestionUploadResponse> ResumeAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(jobId))
         {
             return CreateFailedResponse(jobId, "JobId is required.");
@@ -312,7 +335,12 @@ public class IngestionService : IIngestionService
                     jobId,
                     checkpoint,
                     response,
-                    jobAudit);
+                    jobAudit,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -323,7 +351,9 @@ public class IngestionService : IIngestionService
                 response.CheckpointMessage = "No working or staged records found for resume.";
                 UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, response.Message);
                 UpdateJobAudit(jobAudit, response, response.Message);
-                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
+                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(
+                    response,
+                    cancellationToken: cancellationToken);
                 return response;
             }
 
@@ -335,19 +365,22 @@ public class IngestionService : IIngestionService
                 response.Message = "No remaining records found to resume. Job appears to be already completed.";
                 response.CheckpointMessage = "Resume completed. No pending records.";
                 UpdateCheckpoint(response, jobAudit, response.Status);
-                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
+                response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(
+                    response,
+                    cancellationToken: cancellationToken);
                 response.MetadataJsonPath = response.ProcessingSummaryPath;
                 UpdateJobAudit(jobAudit, response);
-                CleanupStagingForCompletedJob(response);
+                await CleanupStagingForCompletedJobAsync(response, cancellationToken);
                 return response;
             }
 
-            PersistRemainingFindingsInBatches(
+            await PersistRemainingFindingsInBatchesAsync(
                 recordsToResume,
                 response,
                 jobAudit,
                 response.BatchSize,
-                checkpoint.LastSuccessfulBatchNumber);
+                checkpoint.LastSuccessfulBatchNumber,
+                cancellationToken);
 
             response.Status = IngestionJobStatus.Success;
             response.CompletedAtUtc = DateTime.UtcNow;
@@ -356,10 +389,12 @@ public class IngestionService : IIngestionService
             response.CheckpointMessage = "Resume completed successfully.";
 
             UpdateCheckpoint(response, jobAudit, response.Status);
-            response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(response);
+            response.ProcessingSummaryPath = await StoreProcessingSummaryAsync(
+                response,
+                cancellationToken: cancellationToken);
             response.MetadataJsonPath = response.ProcessingSummaryPath;
             UpdateJobAudit(jobAudit, response);
-            CleanupStagingForCompletedJob(response);
+            await CleanupStagingForCompletedJobAsync(response, cancellationToken);
 
             _logger.LogInformation(
                 "[INGESTION_RESUME_COMPLETE] JobId:{JobId}, Status:{Status}, LastSuccessfulBatch:{LastSuccessfulBatch}, LastProcessedRecordCount:{LastProcessedRecordCount}",
@@ -369,6 +404,11 @@ public class IngestionService : IIngestionService
                 response.LastProcessedRecordCount);
 
             return response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("[INGESTION_RESUME_CANCELLED] JobId:{JobId}", jobId);
+            throw;
         }
         catch (Exception ex)
         {
@@ -383,7 +423,9 @@ public class IngestionService : IIngestionService
                 : "Resume failed.";
 
             TryUpdateFailureState(response, jobAudit, ex.Message);
-            await TryStoreProcessingSummaryAsync(response);
+            await TryStoreProcessingSummaryAsync(
+                response,
+                cancellationToken: cancellationToken);
             return response;
         }
     }
@@ -392,8 +434,12 @@ public class IngestionService : IIngestionService
     /// Ingests a source file already uploaded to storage. This is used by the
     /// Step Function orchestration path.
     /// </summary>
-    public async Task<IngestionUploadResponse> IngestAsync(string reportUid)
+    public async Task<IngestionUploadResponse> IngestAsync(
+        string reportUid,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(reportUid))
             throw new ArgumentException("ReportUID is required.", nameof(reportUid));
 
@@ -434,7 +480,12 @@ public class IngestionService : IIngestionService
                 jobAudit.InboundFileName);
 
             var sourceDownloadStopwatch = Stopwatch.StartNew();
-            await using var fileStream = await _storage.DownloadAsync(jobAudit.SourceFilePath);
+            await using var fileStream = await IngestionAsyncIo.OpenSourceReadAsync(
+                _storage,
+                _processingOptions,
+                jobAudit.SourceFilePath,
+                extension,
+                cancellationToken);
             LogStageDuration(reportUid, "SourceDownload", sourceDownloadStopwatch, jobAudit.FileSizeBytes);
 
             var parseStopwatch = Stopwatch.StartNew();
@@ -444,28 +495,35 @@ public class IngestionService : IIngestionService
                 reportUid,
                 jobAudit.InboundFileName,
                 uploadedBy,
-                loadTime);
+                loadTime,
+                cancellationToken);
             LogStageDuration(reportUid, "ParseAndValidate", parseStopwatch, parseResult.TotalRecords);
 
             ApplyParseResult(response, parseResult);
 
             var rejectedRowsStopwatch = Stopwatch.StartNew();
-            PersistRejectedRows(reportUid, jobAudit.InboundFileName, parseResult.RejectedRows);
+            await PersistRejectedRowsAsync(
+                reportUid,
+                jobAudit.InboundFileName,
+                parseResult.RejectedRows,
+                cancellationToken);
             LogStageDuration(reportUid, "RejectedRowPersistence", rejectedRowsStopwatch, parseResult.RejectedRows.Count);
 
             var resumeStoreStopwatch = Stopwatch.StartNew();
             var stagingWritten = await PrepareResumeStoreAsync(
                 response,
                 jobAudit,
-                parseResult.ValidFindings);
+                parseResult.ValidFindings,
+                cancellationToken);
             LogStageDuration(reportUid, "ResumeStorePreparation", resumeStoreStopwatch, parseResult.ValidFindings.Count);
 
             var targetPersistenceStopwatch = Stopwatch.StartNew();
-            PersistValidFindingsInBatches(
+            await PersistValidFindingsInBatchesAsync(
                 parseResult.ValidFindings,
                 response,
                 jobAudit,
-                configuredBatchSize);
+                configuredBatchSize,
+                cancellationToken);
             LogStageDuration(reportUid, "TargetPersistence", targetPersistenceStopwatch, parseResult.ValidFindings.Count);
 
             CompleteResponse(response);
@@ -474,7 +532,8 @@ public class IngestionService : IIngestionService
             var summaryStopwatch = Stopwatch.StartNew();
             var storedMetadataPath = await StoreProcessingSummaryAsync(
                 response,
-                parseResult.RejectedRows);
+                parseResult.RejectedRows,
+                cancellationToken);
             response.MetadataJsonPath = storedMetadataPath;
             response.ProcessingSummaryPath = storedMetadataPath;
             LogStageDuration(reportUid, "ProcessingSummary", summaryStopwatch, parseResult.RejectedRows.Count);
@@ -483,7 +542,7 @@ public class IngestionService : IIngestionService
             if (stagingWritten)
             {
                 var cleanupStopwatch = Stopwatch.StartNew();
-                CleanupStagingForCompletedJob(response);
+                await CleanupStagingForCompletedJobAsync(response, cancellationToken);
                 LogStageDuration(reportUid, "StagingCleanup", cleanupStopwatch, parseResult.ValidFindings.Count);
             }
             else
@@ -506,6 +565,11 @@ public class IngestionService : IIngestionService
 
             return response;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("[INGEST_ASYNC_CANCELLED] ReportUid:{ReportUid}", reportUid);
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[INGEST_ASYNC_ERROR] ReportUid:{ReportUid}", reportUid);
@@ -516,7 +580,10 @@ public class IngestionService : IIngestionService
             response.SourceSystem ??= "Unknown";
 
             TryUpdateFailureState(response, jobAudit, ex.Message);
-            await TryStoreProcessingSummaryAsync(response, parseResult?.RejectedRows);
+            await TryStoreProcessingSummaryAsync(
+                response,
+                parseResult?.RejectedRows,
+                cancellationToken);
             return response;
         }
     }
@@ -622,7 +689,8 @@ public class IngestionService : IIngestionService
     private async Task CreateWorkingFileAsync(
         IngestionUploadResponse response,
         IngestionJobAudit jobAudit,
-        IReadOnlyList<FileFinding> validFindings)
+        IReadOnlyList<FileFinding> validFindings,
+        CancellationToken cancellationToken)
     {
         if (!_processingOptions.EnableParquetWorkingFile || validFindings.Count == 0)
             return;
@@ -630,7 +698,8 @@ public class IngestionService : IIngestionService
         var result = await _workingFileStrategy.WriteAsync(
             response.JobId,
             response.InboundFileName,
-            validFindings);
+            validFindings,
+            cancellationToken);
 
         response.WorkingFileFormat = result.Format;
         response.WorkingFilePath = result.Path;
@@ -649,14 +718,25 @@ public class IngestionService : IIngestionService
     private async Task<bool> PrepareResumeStoreAsync(
         IngestionUploadResponse response,
         IngestionJobAudit jobAudit,
-        IReadOnlyList<FileFinding> validFindings)
+        IReadOnlyList<FileFinding> validFindings,
+        CancellationToken cancellationToken)
     {
         var result = await IngestionResumeStoreCoordinator.PrepareAsync(
             _processingOptions,
             validFindings.Count,
-            createParquetAsync: () => CreateWorkingFileAsync(response, jobAudit, validFindings),
-            writeStaging: () => _stagingRepository.SaveValidFindings(response.JobId, validFindings.ToList()),
-            clearParquetMetadata: () => ClearWorkingFileMetadata(response, jobAudit));
+            createParquetAsync: token => CreateWorkingFileAsync(
+                response,
+                jobAudit,
+                validFindings,
+                token),
+            writeStagingAsync: token => IngestionAsyncIo.SaveStagingAsync(
+                _stagingRepository,
+                response.JobId,
+                validFindings,
+                _processingOptions,
+                token),
+            clearParquetMetadata: () => ClearWorkingFileMetadata(response, jobAudit),
+            cancellationToken);
 
         if (result.ParquetFailure != null)
         {
@@ -699,11 +779,12 @@ public class IngestionService : IIngestionService
         jobAudit.WorkingFileRecordCount = 0;
     }
 
-    private void PersistValidFindingsInBatches(
+    private async Task PersistValidFindingsInBatchesAsync(
         List<FileFinding> validFindings,
         IngestionUploadResponse response,
         IngestionJobAudit jobAudit,
-        int batchSize)
+        int batchSize,
+        CancellationToken cancellationToken)
     {
         if (validFindings.Count == 0)
         {
@@ -723,17 +804,19 @@ public class IngestionService : IIngestionService
         var batchNumber = 0;
         foreach (var chunk in validFindings.Chunk(batchSize))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             batchNumber++;
             IReadOnlyList<FileFinding> records = chunk;
 
             try
             {
-                PersistBatchWithRetry(
+                await PersistBatchWithRetryAsync(
                     records,
                     batchNumber,
                     response.TotalBatches,
                     response,
-                    jobAudit);
+                    jobAudit,
+                    cancellationToken);
 
                 response.PersistedBatchCount++;
                 response.LastSuccessfulBatchNumber = batchNumber;
@@ -746,6 +829,10 @@ public class IngestionService : IIngestionService
                     if (ShouldPersistJobAuditProgress(batchNumber, response.TotalBatches))
                         _jobAuditRepository.Update(jobAudit);
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -768,12 +855,13 @@ public class IngestionService : IIngestionService
         }
     }
 
-    private void PersistRemainingFindingsInBatches(
+    private async Task PersistRemainingFindingsInBatchesAsync(
         List<FileFinding> remainingFindings,
         IngestionUploadResponse response,
         IngestionJobAudit jobAudit,
         int batchSize,
-        int lastSuccessfulBatchNumber)
+        int lastSuccessfulBatchNumber,
+        CancellationToken cancellationToken)
     {
         if (remainingFindings.Count == 0)
             return;
@@ -781,17 +869,19 @@ public class IngestionService : IIngestionService
         var batchNumber = lastSuccessfulBatchNumber;
         foreach (var chunk in remainingFindings.Chunk(batchSize))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             batchNumber++;
             IReadOnlyList<FileFinding> records = chunk;
 
             try
             {
-                PersistBatchWithRetry(
+                await PersistBatchWithRetryAsync(
                     records,
                     batchNumber,
                     response.TotalBatches,
                     response,
-                    jobAudit);
+                    jobAudit,
+                    cancellationToken);
 
                 response.PersistedBatchCount++;
                 response.LastSuccessfulBatchNumber = batchNumber;
@@ -812,6 +902,10 @@ public class IngestionService : IIngestionService
                     response.TotalBatches,
                     records.Count);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 UpdateCheckpoint(response, jobAudit, IngestionJobStatus.Failed, ex.Message);
@@ -823,12 +917,13 @@ public class IngestionService : IIngestionService
         }
     }
 
-    private void PersistBatchWithRetry(
+    private async Task PersistBatchWithRetryAsync(
         IReadOnlyList<FileFinding> records,
         int batchNumber,
         int totalBatches,
         IngestionUploadResponse response,
-        IngestionJobAudit jobAudit)
+        IngestionJobAudit jobAudit,
+        CancellationToken cancellationToken)
     {
         var previousState = _batchPersistenceRetryState.Value;
         _batchPersistenceRetryState.Value = new BatchPersistenceRetryState(
@@ -839,7 +934,13 @@ public class IngestionService : IIngestionService
 
         try
         {
-            _batchPersistencePipeline.Execute(() => _repository.AddRange(records));
+            await _batchPersistencePipeline.ExecuteAsync(
+                token => new ValueTask(IngestionAsyncIo.PersistFindingsAsync(
+                    _repository,
+                    records,
+                    _processingOptions,
+                    token)),
+                cancellationToken);
         }
         finally
         {
@@ -851,7 +952,8 @@ public class IngestionService : IIngestionService
         string jobId,
         IngestionCheckpoint checkpoint,
         IngestionUploadResponse response,
-        IngestionJobAudit jobAudit)
+        IngestionJobAudit jobAudit,
+        CancellationToken cancellationToken)
     {
         var workingFilePath = FirstNotEmpty(
             checkpoint.WorkingFilePath,
@@ -880,7 +982,8 @@ public class IngestionService : IIngestionService
 
                 var records = await _workingFileStrategy.ReadAfterAsync(
                     workingFilePath,
-                    checkpoint.LastProcessedRecordCount);
+                    checkpoint.LastProcessedRecordCount,
+                    cancellationToken);
 
                 response.WorkingFilePath = workingFilePath;
                 response.WorkingFileFormat = workingFileFormat;
@@ -897,6 +1000,10 @@ public class IngestionService : IIngestionService
                     jobId,
                     workingFilePath);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(
@@ -912,16 +1019,23 @@ public class IngestionService : IIngestionService
             jobId,
             checkpoint.LastProcessedRecordCount);
 
-        var stagedCount = _stagingRepository.CountByJobId(jobId);
+        var stagedCount = await IngestionAsyncIo.CountStagedAsync(
+            _stagingRepository,
+            jobId,
+            _processingOptions,
+            cancellationToken);
         if (stagedCount == 0)
         {
             throw new InvalidOperationException(
                 "Resume failed. Neither a readable Parquet working file nor staged records were found for this JobId. Re-upload may be required.");
         }
 
-        return _stagingRepository.GetValidFindingsAfter(
+        return await IngestionAsyncIo.ReadStagedAfterAsync(
+            _stagingRepository,
             jobId,
-            checkpoint.LastProcessedRecordCount);
+            checkpoint.LastProcessedRecordCount,
+            _processingOptions,
+            cancellationToken);
     }
 
     private IngestionJobAudit BuildResumeJobAudit(
@@ -1075,7 +1189,8 @@ public class IngestionService : IIngestionService
 
     private async Task<string> StoreProcessingSummaryAsync(
         IngestionUploadResponse response,
-        IReadOnlyCollection<RejectedRowSummary>? rejectedRows = null)
+        IReadOnlyCollection<RejectedRowSummary>? rejectedRows = null,
+        CancellationToken cancellationToken = default)
     {
         var summary = new ProcessingSummaryArtifact
         {
@@ -1123,21 +1238,25 @@ public class IngestionService : IIngestionService
             response.ReportUid,
             response.StartedAtUtc);
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-        await _storage.UploadAsync(summaryKey, stream);
+        await _storage.UploadAsync(summaryKey, stream, cancellationToken);
         return summaryKey;
     }
 
-    private void PersistRejectedRows(
+    private async Task PersistRejectedRowsAsync(
         string jobId,
         string inboundFileName,
-        IReadOnlyCollection<RejectedRowSummary> rejectedRows)
+        IReadOnlyCollection<RejectedRowSummary> rejectedRows,
+        CancellationToken cancellationToken)
     {
         if (rejectedRows.Count == 0)
             return;
 
-        var details = new List<RejectedRowDetail>(rejectedRows.Count);
+        var batchSize = _processingOptions.ResolveRejectedRowBatchSize();
+        var details = new List<RejectedRowDetail>(Math.Min(batchSize, rejectedRows.Count));
+
         foreach (var row in rejectedRows)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             details.Add(new RejectedRowDetail
             {
                 RejectedRowId = string.IsNullOrWhiteSpace(row.RejectedRowId)
@@ -1157,9 +1276,26 @@ public class IngestionService : IIngestionService
                 ErrorDateUtc = row.ErrorDateUtc == default ? DateTime.UtcNow : row.ErrorDateUtc,
                 RawRowJson = row.RawRowJson
             });
+
+            if (details.Count < batchSize)
+                continue;
+
+            await IngestionAsyncIo.PersistRejectedRowsAsync(
+                _rejectedRowRepository,
+                details,
+                _processingOptions,
+                cancellationToken);
+            details.Clear();
         }
 
-        _rejectedRowRepository.AddRange(details);
+        if (details.Count > 0)
+        {
+            await IngestionAsyncIo.PersistRejectedRowsAsync(
+                _rejectedRowRepository,
+                details,
+                _processingOptions,
+                cancellationToken);
+        }
     }
 
     private void UpdateJobAudit(
@@ -1238,13 +1374,21 @@ public class IngestionService : IIngestionService
 
     private async Task TryStoreProcessingSummaryAsync(
         IngestionUploadResponse response,
-        IReadOnlyCollection<RejectedRowSummary>? rejectedRows = null)
+        IReadOnlyCollection<RejectedRowSummary>? rejectedRows = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var path = await StoreProcessingSummaryAsync(response, rejectedRows);
+            var path = await StoreProcessingSummaryAsync(
+                response,
+                rejectedRows,
+                cancellationToken);
             response.MetadataJsonPath = path;
             response.ProcessingSummaryPath = path;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception summaryEx)
         {
@@ -1255,7 +1399,9 @@ public class IngestionService : IIngestionService
         }
     }
 
-    private void CleanupStagingForCompletedJob(IngestionUploadResponse response)
+    private async Task CleanupStagingForCompletedJobAsync(
+        IngestionUploadResponse response,
+        CancellationToken cancellationToken)
     {
         if (response.Status != IngestionJobStatus.Success
             && response.Status != IngestionJobStatus.PartialSuccess)
@@ -1265,7 +1411,15 @@ public class IngestionService : IIngestionService
 
         try
         {
-            _stagingRepository.DeleteByJobId(response.JobId);
+            await IngestionAsyncIo.DeleteStagingAsync(
+                _stagingRepository,
+                response.JobId,
+                _processingOptions,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception cleanupEx)
         {

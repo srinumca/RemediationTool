@@ -3,7 +3,7 @@ using RemediationTool.Application.Interfaces;
 
 namespace RemediationTool.Infrastructure;
 
-public class LocalStorageService : IStorageService
+public class LocalStorageService : IStorageService, IStreamingStorageService
 {
     private const int FileBufferSize = 81920;
     private readonly string _rootPath;
@@ -14,12 +14,16 @@ public class LocalStorageService : IStorageService
         Directory.CreateDirectory(_rootPath);
     }
 
-    public async Task UploadAsync(string key, Stream stream)
+    public async Task UploadAsync(
+        string key,
+        Stream stream,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
 
         ArgumentNullException.ThrowIfNull(stream);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var fullPath = GetFullPath(key);
         var directory = Path.GetDirectoryName(fullPath);
@@ -35,11 +39,15 @@ public class LocalStorageService : IStorageService
             FileBufferSize,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-        await stream.CopyToAsync(fileStream);
+        await stream.CopyToAsync(fileStream, cancellationToken);
     }
 
-    public Task<Stream> DownloadAsync(string key)
+    public Task<Stream> DownloadAsync(
+        string key,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
 
@@ -59,16 +67,35 @@ public class LocalStorageService : IStorageService
         return Task.FromResult(stream);
     }
 
-    public Task<bool> ExistsAsync(string key)
+    public Task<Stream> OpenReadAsync(
+        string key,
+        CancellationToken cancellationToken = default)
+        => DownloadAsync(key, cancellationToken);
+
+    public Task<Stream> OpenSeekableReadAsync(
+        string key,
+        CancellationToken cancellationToken = default)
+        => DownloadAsync(key, cancellationToken);
+
+    public Task<bool> ExistsAsync(
+        string key,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(key))
             return Task.FromResult(false);
 
         return Task.FromResult(File.Exists(GetFullPath(key)));
     }
 
-    public Task MoveAsync(string sourceKey, string destinationKey)
+    public Task MoveAsync(
+        string sourceKey,
+        string destinationKey,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(sourceKey))
             throw new ArgumentException("Source key is required.", nameof(sourceKey));
 
@@ -89,8 +116,12 @@ public class LocalStorageService : IStorageService
         return Task.CompletedTask;
     }
 
-    public Task DeleteAsync(string key)
+    public Task DeleteAsync(
+        string key,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Storage key is required.", nameof(key));
 
