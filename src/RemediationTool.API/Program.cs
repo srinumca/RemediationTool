@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Identity.Web;
 using Microsoft.OpenApi.Models;
+using RemediationTool.API.Authorization;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Logging;
 using RemediationTool.Application.Options;
@@ -86,11 +87,11 @@ try
     // Replaces the default ASP.NET Core logging with Serilog.
     // All ILogger<T> calls throughout the app automatically write through Serilog.
     builder.Host.UseSerilog((context, services, configuration) => configuration
-        .ReadFrom.Configuration(context.Configuration)   // reads "Serilog" section from appsettings.json
-        .ReadFrom.Services(services)                      // allows enrichers registered in DI
-        .Enrich.FromLogContext()                          // adds log context properties (e.g. RequestId)
-        .Enrich.WithMachineName()                         // adds MachineName to every log entry
-        .Enrich.WithEnvironmentName());                   // adds EnvironmentName (Development / Production)
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithMachineName()
+        .Enrich.WithEnvironmentName());
 
     // ─── Authentication & authorization ───────────────────────────────────────
     // User calls must contain the configured delegated scope. Machine-to-machine
@@ -111,20 +112,18 @@ try
                 .RequireAuthenticatedUser()
                 .RequireAssertion(context =>
                 {
-                    var scopeClaim = context.User.FindFirst("scp")
-                        ?? context.User.FindFirst("http://schemas.microsoft.com/identity/claims/scope");
-
-                    var scopes = scopeClaim?.Value.Split(
-                            ' ',
-                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        ?? Array.Empty<string>();
-
-                    return scopes.Contains(delegatedScope, StringComparer.OrdinalIgnoreCase)
-                        || context.User.IsInRole(applicationRole);
+                    return AuthorizationClaimChecks.HasScope(context.User, delegatedScope)
+                        || AuthorizationClaimChecks.HasRole(context.User, applicationRole);
                 })
                 .Build();
         }
     });
+
+    builder.Services.AddRemediationAuthorizationPolicies(
+        builder.Configuration,
+        authenticationEnabled,
+        delegatedScope,
+        applicationRole);
 
     // ─── Controllers ─────────────────────────────────────────────────────────
     builder.Services.AddControllers()
@@ -254,7 +253,6 @@ try
             policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
     var app = builder.Build();
 
     // ─── DynamoDB table initialisation ───────────────────────────────────────
@@ -266,7 +264,6 @@ try
     }
 
     // ─── Serilog HTTP request logging ────────────────────────────────────────
-    // Logs every HTTP request: method, path, status code, and elapsed time.
     app.UseSerilogRequestLogging(options =>
     {
         options.MessageTemplate =
@@ -307,11 +304,9 @@ try
 }
 catch (Exception ex)
 {
-    // Fatal startup crash — written before Serilog is fully configured
     Log.Fatal(ex, "GFR Remediation Tool terminated unexpectedly during startup.");
 }
 finally
 {
-    // Flush all buffered log entries before process exits
     Log.CloseAndFlush();
 }
