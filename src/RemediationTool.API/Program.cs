@@ -1,5 +1,3 @@
-using Amazon.DynamoDBv2;
-using Amazon.S3;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -176,8 +174,6 @@ try
     // ─── Options ─────────────────────────────────────────────────────────────
     builder.Services.Configure<IngestionProcessingOptions>(
         builder.Configuration.GetSection(IngestionProcessingOptions.SectionName));
-    builder.Services.Configure<QuarantineProcessingOptions>(
-        builder.Configuration.GetSection(QuarantineProcessingOptions.SectionName));
 
     // ─── Storage ─────────────────────────────────────────────────────────────
     var storageType = builder.Configuration["Storage:Type"] ?? "Local";
@@ -187,12 +183,10 @@ try
     {
         builder.Services.AddRemediationAwsServices(builder.Configuration);
         builder.Services.AddSingleton<IStorageService, S3StorageService>();
-        builder.Services.AddSingleton<IQuarantineFileService, StorageQuarantineFileService>();
     }
     else
     {
         builder.Services.AddSingleton<IStorageService, LocalStorageService>();
-        builder.Services.AddSingleton<IQuarantineFileService, LocalQuarantineFileService>();
     }
 
     // ─── Persistence ─────────────────────────────────────────────────────────
@@ -227,13 +221,9 @@ try
     // ─── Working file strategy (Parquet) ─────────────────────────────────────
     builder.Services.AddScoped<IIngestionWorkingFileStrategy, ParquetIngestionWorkingFileStrategy>();
 
-    // ─── Application Services ─────────────────────────────────────────────────
+    // ─── Application services ─────────────────────────────────────────────────
     builder.Services.AddScoped<UploadService>();
     builder.Services.AddScoped<IngestionService>();
-    builder.Services.AddScoped<QuarantineService>();
-    builder.Services.AddScoped<RestoreService>();
-    builder.Services.AddScoped<DeleteService>();
-    builder.Services.AddScoped<ReportService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     // ─── CORS (for dashboard) ─────────────────────────────────────────────────
