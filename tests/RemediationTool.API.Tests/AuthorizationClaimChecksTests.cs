@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using RemediationTool.API.Authorization;
+using Xunit;
 
 namespace RemediationTool.API.Tests;
 
