@@ -35,6 +35,8 @@ try
 
     var authenticationEnabled = builder.Configuration.GetValue<bool>("Authentication:Enabled");
     var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
+    var delegatedScope = builder.Configuration["AzureAd:Scopes"] ?? string.Empty;
+    var applicationRole = builder.Configuration["AzureAd:ApplicationRole"] ?? string.Empty;
     var swaggerClientId = builder.Configuration["SwaggerAzureAd:ClientId"] ?? string.Empty;
     var swaggerScope = builder.Configuration["SwaggerAzureAd:Scope"] ?? string.Empty;
 
@@ -44,6 +46,8 @@ try
         {
             (Key: "AzureAd:TenantId", Value: azureAdTenantId),
             (Key: "AzureAd:ClientId", Value: builder.Configuration["AzureAd:ClientId"]),
+            (Key: "AzureAd:Scopes", Value: delegatedScope),
+            (Key: "AzureAd:ApplicationRole", Value: applicationRole),
             (Key: "SwaggerAzureAd:ClientId", Value: swaggerClientId),
             (Key: "SwaggerAzureAd:Scope", Value: swaggerScope)
         }
@@ -89,8 +93,8 @@ try
         .Enrich.WithEnvironmentName());                   // adds EnvironmentName (Development / Production)
 
     // ─── Authentication & authorization ───────────────────────────────────────
-    // When enabled, Microsoft.Identity.Web validates Entra ID access tokens.
-    // A fallback policy protects every mapped controller endpoint by default.
+    // User calls must contain the configured delegated scope. Machine-to-machine
+    // calls must contain the configured application role.
     if (authenticationEnabled)
     {
         builder.Services
@@ -105,6 +109,19 @@ try
             options.FallbackPolicy = new AuthorizationPolicyBuilder(
                     JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
+                .RequireAssertion(context =>
+                {
+                    var scopeClaim = context.User.FindFirst("scp")
+                        ?? context.User.FindFirst("http://schemas.microsoft.com/identity/claims/scope");
+
+                    var scopes = scopeClaim?.Value.Split(
+                            ' ',
+                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        ?? Array.Empty<string>();
+
+                    return scopes.Contains(delegatedScope, StringComparer.OrdinalIgnoreCase)
+                        || context.User.IsInRole(applicationRole);
+                })
                 .Build();
         }
     });
