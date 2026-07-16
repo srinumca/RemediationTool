@@ -25,12 +25,9 @@ public static class AuthorizationServiceCollectionExtensions
         {
             if (!authenticationEnabled)
             {
-                // Authentication is intentionally disabled until Entra registrations
-                // are supplied. Register permissive versions so policy-decorated
-                // controllers continue to work in the existing local environment.
+                // Keep local environments usable until Entra registrations are supplied.
                 AddDisabledPolicy(options, AuthorizationPolicies.ReadAccess);
                 AddDisabledPolicy(options, AuthorizationPolicies.AdminAccess);
-                AddDisabledPolicy(options, AuthorizationPolicies.SystemAdminAccess);
                 AddDisabledPolicy(options, AuthorizationPolicies.InternalApplication);
                 return;
             }
@@ -50,12 +47,6 @@ public static class AuthorizationServiceCollectionExtensions
                 delegatedScope,
                 systemAdminRole,
                 adminRole);
-
-            AddDelegatedRolePolicy(
-                options,
-                AuthorizationPolicies.SystemAdminAccess,
-                delegatedScope,
-                systemAdminRole);
 
             options.AddPolicy(
                 AuthorizationPolicies.InternalApplication,
