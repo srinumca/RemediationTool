@@ -3,20 +3,17 @@ using System.Security.Claims;
 namespace RemediationTool.API.Authorization;
 
 /// <summary>
-/// Named authorization policies used by API controllers.
-/// Keeping policy names in one place avoids string duplication and makes
-/// future Entra role-name changes configuration-only.
+/// Named authorization policies used by the retained API controllers.
 /// </summary>
 public static class AuthorizationPolicies
 {
     public const string ReadAccess = "Remediation.ReadAccess";
     public const string AdminAccess = "Remediation.AdminAccess";
-    public const string SystemAdminAccess = "Remediation.SystemAdminAccess";
     public const string InternalApplication = "Remediation.InternalApplication";
 }
 
 /// <summary>
-/// Default Entra app-role values. These values can be overridden through
+/// Default Entra app-role values. Values can be overridden through
 /// Authorization:Roles configuration without changing controller code.
 /// </summary>
 public static class RemediationRoleDefaults
@@ -29,8 +26,8 @@ public static class RemediationRoleDefaults
 
 /// <summary>
 /// Claim checks shared by authorization policies.
-/// Microsoft Entra can emit scopes and roles using different claim type names
-/// depending on token version and claim mapping, so both standard forms are accepted.
+/// Microsoft Entra can emit scopes and roles using different claim type names,
+/// so both standard forms are accepted.
 /// </summary>
 public static class AuthorizationClaimChecks
 {

@@ -8,11 +8,10 @@ using RemediationTool.Domain.Enum;
 namespace RemediationTool.API.Controllers;
 
 /// <summary>
-/// Ingestion API — processes rows from an already-uploaded EDG report.
-/// This controller is called by AWS Step Functions and requires an Entra
-/// application token containing the configured application role.
+/// Ingestion API for direct dashboard ingestion and Step Function processing.
+/// User-triggered direct ingestion requires Admin access. Job-based processing,
+/// resume, and status endpoints require the configured Entra application role.
 /// </summary>
-[Authorize(Policy = AuthorizationPolicies.InternalApplication)]
 [ApiController]
 [Route("api/ingestion")]
 public class IngestionController : ControllerBase
@@ -28,6 +27,56 @@ public class IngestionController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Uploads and ingests a file in the same request for the retained dashboard flow.
+    /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminAccess)]
+    [HttpPost("upload")]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UploadAndIngest(
+        IFormFile file,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "[INGESTION_DIRECT_UPLOAD_REQUEST] FileName:{FileName}, Size:{Size}",
+            file?.FileName,
+            file?.Length);
+
+        try
+        {
+            var response = await _ingestionService.ProcessAsync(file, cancellationToken);
+
+            _logger.LogInformation(
+                "[INGESTION_DIRECT_UPLOAD_RESPONSE] JobId:{JobId}, Status:{Status}, Total:{Total}, Success:{Success}, Rejected:{Rejected}",
+                response.JobId,
+                response.Status,
+                response.TotalRecords,
+                response.SuccessCount,
+                response.RejectCount);
+
+            if (response.Status == IngestionJobStatus.Failed && response.TotalRecords == 0)
+                return UnprocessableEntity(response);
+
+            return Ok(response);
+        }
+        catch (InvalidDataException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[INGESTION_DIRECT_UPLOAD_BAD_REQUEST] FileName:{FileName}, Reason:{Reason}",
+                file?.FileName,
+                ex.Message);
+
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.InternalApplication)]
     [HttpPost("{reportUid}")]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
@@ -64,6 +113,7 @@ public class IngestionController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.InternalApplication)]
     [HttpPost("{reportUid}/resume")]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status422UnprocessableEntity)]
@@ -100,6 +150,7 @@ public class IngestionController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.InternalApplication)]
     [HttpGet("{reportUid}/status")]
     [ProducesResponseType(typeof(IngestionUploadResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

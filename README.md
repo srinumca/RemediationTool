@@ -1,78 +1,103 @@
-# RemediationTool_POC
+# GFR Remediation Tool
 
-## Microsoft Entra ID authentication
+## Current application scope
 
-The API supports Microsoft Entra ID JWT access-token validation and Swagger OAuth 2.0 Authorization Code flow with PKCE.
+This phase of the application supports only the inbound-file workflow and its operational dashboard:
 
-Authentication remains disabled by default so the application can continue to run until the Entra registrations and environment values are available. Controller authorization policies are already implemented and become active when `Authentication:Enabled` is set to `true`.
+- Upload an EDG CSV or XLSX file.
+- Store the source file in the configured storage provider.
+- Create and track ingestion jobs.
+- Parse and validate inbound records.
+- Persist valid findings and rejected rows.
+- Create and validate the Parquet working file.
+- Process findings in batches with retry and checkpoint support.
+- Resume failed or partially completed ingestion jobs.
+- Display jobs, findings, and rejected rows through dashboard APIs and the static dashboard page.
 
-## Required Entra registrations
+Quarantine, restore, deletion, retention deletion, and separate report APIs are intentionally outside the current phase.
 
-Create two app registrations.
+## Retained APIs
 
-### 1. GFR Remediation Tool API
+### Upload
 
-- Single-tenant web API.
-- Expose delegated scope `access_as_user` for Swagger and UI calls.
-- Expose application role `access_as_application` for machine-to-machine callers.
-- Expose these user app-role values:
-  - `System_Admin`
-  - `Admin`
-  - `User`
-  - `View_Only`
-- The complete delegated scope normally looks like `api://<api-client-id>/access_as_user`.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/upload` | Uploads the source file and creates an ingestion job for asynchronous processing. |
+| `GET` | `/api/upload/{reportUid}` | Returns the upload/job status. |
 
-### 2. GFR Remediation Tool Swagger
+### Ingestion
 
-- Public/browser client.
-- Add the API's delegated `access_as_user` permission.
-- Configure Authorization Code flow with PKCE.
-- Do not configure or expose a client secret in Swagger.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/ingestion/upload` | Uploads and ingests a file in one request for the retained dashboard flow. |
+| `POST` | `/api/ingestion/{reportUid}` | Processes a previously uploaded file. |
+| `POST` | `/api/ingestion/{reportUid}/resume` | Resumes from the latest checkpoint. |
+| `GET` | `/api/ingestion/{reportUid}/status` | Returns ingestion status. |
 
-For local development, register:
+### Dashboard
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/dashboard/jobs` | Returns ingestion jobs. |
+| `GET` | `/api/dashboard/jobs/{jobId}` | Returns one ingestion job. |
+| `GET` | `/api/dashboard/jobs/{jobId}/findings` | Returns successful findings for a job. |
+| `GET` | `/api/dashboard/jobs/{jobId}/rejected` | Returns rejected rows for a job. |
+| `GET` | `/api/dashboard/rejected` | Returns rejected rows across jobs. |
+
+## Retained supporting capabilities
+
+- Microsoft Entra ID JWT validation.
+- Swagger OAuth 2.0 Authorization Code flow with PKCE.
+- User-role and application-role authorization.
+- Serilog application, audit, and HTTP request logging.
+- Global exception handling.
+- FluentValidation.
+- S3 and local storage implementations.
+- DynamoDB and JSON persistence implementations.
+- CSV/XLSX parsing.
+- Parquet working-file processing.
+- Batch persistence with bounded concurrency and retry.
+- Checkpoint and resume support.
+- Static dashboard UI.
+
+## Authorization matrix
+
+| Endpoint area | Required caller when authentication is enabled |
+|---|---|
+| Upload API and upload status | User token with `access_as_user` and `Admin` or `System_Admin` role |
+| Dashboard direct upload-and-ingest | User token with `access_as_user` and `Admin` or `System_Admin` role |
+| Job-based ingestion, resume, and ingestion status | App token with `access_as_application` role |
+| Dashboard read APIs | User token with `access_as_user` and `System_Admin`, `Admin`, `User`, or `View_Only` role |
+
+Authentication is disabled by default until the real Microsoft Entra registration values are supplied.
+
+## Microsoft Entra configuration
+
+Create two app registrations:
+
+1. **GFR Remediation Tool API**
+   - Single-tenant API.
+   - Delegated scope: `access_as_user`.
+   - Application role: `access_as_application`.
+   - User roles: `System_Admin`, `Admin`, `User`, and `View_Only`.
+
+2. **GFR Remediation Tool Swagger**
+   - Public browser client.
+   - Authorization Code flow with PKCE.
+   - Permission to request the API's `access_as_user` scope.
+   - No client secret in Swagger.
+
+Local Swagger redirect URI:
 
 ```text
 https://localhost:58207/swagger/oauth2-redirect.html
 ```
 
-Add the equivalent redirect URI for DEV, QA, staging, and any other environment where Swagger is approved.
-
-## Configuration
-
-Provide real values through environment-specific configuration or deployment variables:
-
-```json
-{
-  "Authentication": {
-    "Enabled": true
-  },
-  "AzureAd": {
-    "Instance": "https://login.microsoftonline.com/",
-    "TenantId": "<tenant-id>",
-    "ClientId": "<api-application-client-id>",
-    "Audience": "api://<api-application-client-id>",
-    "Scopes": "access_as_user",
-    "ApplicationRole": "access_as_application"
-  },
-  "SwaggerAzureAd": {
-    "ClientId": "<swagger-application-client-id>",
-    "Scope": "api://<api-application-client-id>/access_as_user"
-  },
-  "Authorization": {
-    "Roles": {
-      "SystemAdmin": "System_Admin",
-      "Admin": "Admin",
-      "User": "User",
-      "ViewOnly": "View_Only"
-    }
-  }
-}
-```
-
-ASP.NET Core environment-variable names use double underscores:
+Environment variables:
 
 ```text
 Authentication__Enabled=true
+Swagger__Enabled=true
 AzureAd__TenantId=<tenant-id>
 AzureAd__ClientId=<api-client-id>
 AzureAd__Audience=api://<api-client-id>
@@ -86,53 +111,11 @@ Authorization__Roles__User=User
 Authorization__Roles__ViewOnly=View_Only
 ```
 
-## Authorization matrix
+AWS Step Functions or another approved machine caller must obtain an Entra app-only access token containing `access_as_application` before authentication is enabled.
 
-| Endpoint area | Required caller |
-|---|---|
-| Upload and upload status | `Admin` or `System_Admin` user |
-| Queue quarantine | `Admin` or `System_Admin` user |
-| Execute quarantine processing | App token with `access_as_application` |
-| Restore one or all files | `Admin` or `System_Admin` user |
-| Manual delete one or all files | `System_Admin` user |
-| Automated retention deletion | App token with `access_as_application` |
-| Ingestion, resume, ingestion status | App token with `access_as_application` |
-| Reports and dashboard | `System_Admin`, `Admin`, `User`, or `View_Only` user |
+## Validation
 
-A user call must contain both the delegated `access_as_user` scope and an allowed business app role. An internal service call must contain the `access_as_application` app role.
-
-## Swagger login flow
-
-1. Start the API in the Development environment.
-2. Open `/swagger`.
-3. Select **Authorize**.
-4. Sign in with a Microsoft Entra account.
-5. Approve the API permission when required.
-6. Swagger sends `Authorization: Bearer <token>` with requests.
-
-## Non-user callers
-
-AWS Step Functions and other machine callers must obtain an Entra app-only token through the client-credentials flow, or through an approved workload-identity/federation setup. The service principal must be assigned the API's `access_as_application` role. Without that token, internal ingestion, quarantine-run, and retention-delete calls receive `401 Unauthorized` or `403 Forbidden`.
-
-## Information still required from the Entra and platform teams
-
-- Tenant ID and tenant domain.
-- API app registration client ID.
-- Confirmed API Application ID URI/audience.
-- Confirmed delegated scope value.
-- Swagger client ID.
-- Redirect URI for each approved environment.
-- Admin consent confirmation.
-- Confirmation that the four business app roles use the configured values.
-- User or AD-group assignments to each business app role.
-- Step Functions/service app registration client ID.
-- Approved machine credential method: secret, certificate, or workload identity federation.
-- Assignment of `access_as_application` to the machine service principal.
-- Environment hostnames and the environments in which Swagger may be enabled.
-
-## Validation before enabling
-
-Run these checks after inserting the real Entra values:
+Run before merging or deploying:
 
 ```text
 dotnet restore
@@ -142,9 +125,11 @@ dotnet test RemediationTool.sln
 
 Then verify:
 
-- No token returns `401`.
-- Valid token without the required role returns `403`.
-- Valid user token with the correct scope and role succeeds.
-- Valid app-only token succeeds only on internal processing endpoints.
-- Wrong issuer, audience, expired, or invalid-signature tokens are rejected.
-- Swagger redirects to Entra, returns to `/swagger/oauth2-redirect.html`, and sends the access token.
+- `/api/upload` returns `202 Accepted` and creates a job.
+- `/api/ingestion/upload` continues to support the static dashboard upload-and-ingest flow.
+- Job-based ingestion processes valid and rejected rows.
+- Parquet, retry, checkpoint, and resume paths remain operational.
+- Dashboard APIs return jobs, findings, and rejected rows.
+- Missing token returns `401` when authentication is enabled.
+- Invalid role/scope returns `403`.
+- Valid user and application tokens access only their intended endpoints.

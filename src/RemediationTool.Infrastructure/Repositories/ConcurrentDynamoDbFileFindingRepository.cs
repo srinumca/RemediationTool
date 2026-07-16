@@ -11,8 +11,8 @@ using System.Diagnostics;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// Preserves the existing repository behavior while accelerating large
-/// ingestion writes with bounded DynamoDB concurrency.
+/// Persists ingestion findings with bounded DynamoDB concurrency and provides
+/// the dashboard lookup by ingestion job.
 /// </summary>
 public sealed class ConcurrentDynamoDbFileFindingRepository :
     IFileFindingRepository,
@@ -42,9 +42,6 @@ public sealed class ConcurrentDynamoDbFileFindingRepository :
         _maxConcurrentBatchWrites = processingOptions.Value.ResolveDynamoDbWriteConcurrency();
         _logger = logger;
     }
-
-    public void Add(FileFinding finding)
-        => _inner.Add(finding);
 
     public void AddRange(IReadOnlyList<FileFinding> findings)
         => AddRangeAsync(findings).GetAwaiter().GetResult();
@@ -133,41 +130,8 @@ public sealed class ConcurrentDynamoDbFileFindingRepository :
         }
     }
 
-    public void Update(FileFinding finding)
-        => _inner.Update(finding);
-
-    public FileFinding? GetById(Guid id)
-        => _inner.GetById(id);
-
-    public FileFinding? GetLatestBySourceRecordId(string sourceRecordId)
-        => _inner.GetLatestBySourceRecordId(sourceRecordId);
-
     public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
         => _inner.GetByIngestionJobId(ingestionJobId);
-
-    public IReadOnlyList<FileFinding> GetLatestByFindingType(string findingType)
-        => _inner.GetLatestByFindingType(findingType);
-
-    public IReadOnlyList<FileFinding> GetLatestByDataSystem(string dataSystem)
-        => _inner.GetLatestByDataSystem(dataSystem);
-
-    public IReadOnlyList<FileFinding> GetHistoryBySourceRecordId(string sourceRecordId)
-        => _inner.GetHistoryBySourceRecordId(sourceRecordId);
-
-    public PagedResult<FileFinding> GetLatestPaged(
-        int pageSize,
-        string? lastEvaluatedKey = null,
-        string? findingType = null)
-        => _inner.GetLatestPaged(pageSize, lastEvaluatedKey, findingType);
-
-    public IReadOnlyDictionary<string, int> GetCountByFindingType()
-        => _inner.GetCountByFindingType();
-
-    public int CountByFindingType(string findingType)
-        => _inner.CountByFindingType(findingType);
-
-    public List<FileFinding> GetAll()
-        => _inner.GetAll();
 
     private static int CalculateBatchCount(int recordCount)
         => (recordCount + DynamoDbBatchLimit - 1) / DynamoDbBatchLimit;

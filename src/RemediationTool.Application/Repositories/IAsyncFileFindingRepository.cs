@@ -3,8 +3,7 @@ using RemediationTool.Domain.Entities;
 namespace RemediationTool.Application.Repositories;
 
 /// <summary>
-/// Optional asynchronous contract for high-volume finding writes.
-/// Existing synchronous repository contracts remain unchanged for compatibility.
+/// Optional asynchronous contract for high-volume ingestion finding writes.
 /// </summary>
 public interface IAsyncFileFindingRepository
 {
