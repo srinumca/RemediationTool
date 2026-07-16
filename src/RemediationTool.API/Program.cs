@@ -1,7 +1,11 @@
 using Amazon.DynamoDBv2;
 using Amazon.S3;
 using FluentValidation;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Identity.Web;
+using Microsoft.OpenApi.Models;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Logging;
 using RemediationTool.Application.Options;
@@ -28,6 +32,35 @@ try
     Log.Information("GFR Remediation Tool starting up...");
 
     var builder = WebApplication.CreateBuilder(args);
+
+    var authenticationEnabled = builder.Configuration.GetValue<bool>("Authentication:Enabled");
+    var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
+    var delegatedScope = builder.Configuration["AzureAd:Scopes"] ?? string.Empty;
+    var applicationRole = builder.Configuration["AzureAd:ApplicationRole"] ?? string.Empty;
+    var swaggerClientId = builder.Configuration["SwaggerAzureAd:ClientId"] ?? string.Empty;
+    var swaggerScope = builder.Configuration["SwaggerAzureAd:Scope"] ?? string.Empty;
+
+    if (authenticationEnabled)
+    {
+        var missingAuthenticationSettings = new[]
+        {
+            (Key: "AzureAd:TenantId", Value: azureAdTenantId),
+            (Key: "AzureAd:ClientId", Value: builder.Configuration["AzureAd:ClientId"]),
+            (Key: "AzureAd:Scopes", Value: delegatedScope),
+            (Key: "AzureAd:ApplicationRole", Value: applicationRole),
+            (Key: "SwaggerAzureAd:ClientId", Value: swaggerClientId),
+            (Key: "SwaggerAzureAd:Scope", Value: swaggerScope)
+        }
+        .Where(setting => string.IsNullOrWhiteSpace(setting.Value))
+        .Select(setting => setting.Key)
+        .ToArray();
+
+        if (missingAuthenticationSettings.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"Microsoft Entra authentication is enabled, but these settings are missing: {string.Join(", ", missingAuthenticationSettings)}.");
+        }
+    }
 
     var ingestionProcessingOptions = builder.Configuration
         .GetSection(IngestionProcessingOptions.SectionName)
@@ -59,6 +92,40 @@ try
         .Enrich.WithMachineName()                         // adds MachineName to every log entry
         .Enrich.WithEnvironmentName());                   // adds EnvironmentName (Development / Production)
 
+    // ─── Authentication & authorization ───────────────────────────────────────
+    // User calls must contain the configured delegated scope. Machine-to-machine
+    // calls must contain the configured application role.
+    if (authenticationEnabled)
+    {
+        builder.Services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
+    }
+
+    builder.Services.AddAuthorization(options =>
+    {
+        if (authenticationEnabled)
+        {
+            options.FallbackPolicy = new AuthorizationPolicyBuilder(
+                    JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser()
+                .RequireAssertion(context =>
+                {
+                    var scopeClaim = context.User.FindFirst("scp")
+                        ?? context.User.FindFirst("http://schemas.microsoft.com/identity/claims/scope");
+
+                    var scopes = scopeClaim?.Value.Split(
+                            ' ',
+                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        ?? Array.Empty<string>();
+
+                    return scopes.Contains(delegatedScope, StringComparer.OrdinalIgnoreCase)
+                        || context.User.IsInRole(applicationRole);
+                })
+                .Build();
+        }
+    });
+
     // ─── Controllers ─────────────────────────────────────────────────────────
     builder.Services.AddControllers()
         .AddJsonOptions(opts =>
@@ -71,6 +138,44 @@ try
     builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new() { Title = "GFR Remediation Tool API", Version = "v1" });
+
+        if (authenticationEnabled)
+        {
+            c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
+            {
+                Type = SecuritySchemeType.OAuth2,
+                Description = "Microsoft Entra ID authorization code flow with PKCE.",
+                Flows = new OpenApiOAuthFlows
+                {
+                    AuthorizationCode = new OpenApiOAuthFlow
+                    {
+                        AuthorizationUrl = new Uri(
+                            $"https://login.microsoftonline.com/{azureAdTenantId}/oauth2/v2.0/authorize"),
+                        TokenUrl = new Uri(
+                            $"https://login.microsoftonline.com/{azureAdTenantId}/oauth2/v2.0/token"),
+                        Scopes = new Dictionary<string, string>
+                        {
+                            [swaggerScope] = "Access the GFR Remediation Tool API"
+                        }
+                    }
+                }
+            });
+
+            c.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference
+                        {
+                            Type = ReferenceType.SecurityScheme,
+                            Id = "oauth2"
+                        }
+                    },
+                    new[] { swaggerScope }
+                }
+            });
+        }
     });
 
     // ─── Validation ──────────────────────────────────────────────────────────
@@ -171,15 +276,32 @@ try
     if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
-        app.UseSwaggerUI();
+        app.UseSwaggerUI(options =>
+        {
+            if (authenticationEnabled)
+            {
+                options.OAuthClientId(swaggerClientId);
+                options.OAuthUsePkce();
+                options.OAuthScopes(swaggerScope);
+                options.OAuthAppName("GFR Remediation Tool Swagger");
+            }
+        });
     }
 
     app.UseCors();
     app.UseStaticFiles();
+
+    if (authenticationEnabled)
+    {
+        app.UseAuthentication();
+    }
+
     app.UseAuthorization();
     app.MapControllers();
 
-    Log.Information("GFR Remediation Tool started successfully.");
+    Log.Information(
+        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}",
+        authenticationEnabled);
 
     app.Run();
 }
