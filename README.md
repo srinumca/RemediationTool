@@ -6,13 +6,13 @@ This phase of the application supports only the inbound-file workflow and its op
 
 - Upload an EDG CSV or XLSX file.
 - Store the source file in the configured storage provider.
-- Create and track the ingestion job.
+- Create and track ingestion jobs.
 - Parse and validate inbound records.
 - Persist valid findings and rejected rows.
 - Create and validate the Parquet working file.
 - Process findings in batches with retry and checkpoint support.
 - Resume failed or partially completed ingestion jobs.
-- Display jobs, findings, and rejected rows through the dashboard APIs and static dashboard page.
+- Display jobs, findings, and rejected rows through dashboard APIs and the static dashboard page.
 
 Quarantine, restore, deletion, retention deletion, and separate report APIs are intentionally outside the current phase.
 
@@ -22,14 +22,15 @@ Quarantine, restore, deletion, retention deletion, and separate report APIs are 
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/upload` | Uploads the source file and creates an ingestion job. |
+| `POST` | `/api/upload` | Uploads the source file and creates an ingestion job for asynchronous processing. |
 | `GET` | `/api/upload/{reportUid}` | Returns the upload/job status. |
 
 ### Ingestion
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/ingestion/{reportUid}` | Processes an uploaded file. |
+| `POST` | `/api/ingestion/upload` | Uploads and ingests a file in one request for the retained dashboard flow. |
+| `POST` | `/api/ingestion/{reportUid}` | Processes a previously uploaded file. |
 | `POST` | `/api/ingestion/{reportUid}/resume` | Resumes from the latest checkpoint. |
 | `GET` | `/api/ingestion/{reportUid}/status` | Returns ingestion status. |
 
@@ -63,9 +64,10 @@ Quarantine, restore, deletion, retention deletion, and separate report APIs are 
 
 | Endpoint area | Required caller when authentication is enabled |
 |---|---|
-| Upload and upload status | User token with `access_as_user` and `Admin` or `System_Admin` role |
-| Ingestion, resume, and ingestion status | App token with `access_as_application` role |
-| Dashboard | User token with `access_as_user` and `System_Admin`, `Admin`, `User`, or `View_Only` role |
+| Upload API and upload status | User token with `access_as_user` and `Admin` or `System_Admin` role |
+| Dashboard direct upload-and-ingest | User token with `access_as_user` and `Admin` or `System_Admin` role |
+| Job-based ingestion, resume, and ingestion status | App token with `access_as_application` role |
+| Dashboard read APIs | User token with `access_as_user` and `System_Admin`, `Admin`, `User`, or `View_Only` role |
 
 Authentication is disabled by default until the real Microsoft Entra registration values are supplied.
 
@@ -123,8 +125,9 @@ dotnet test RemediationTool.sln
 
 Then verify:
 
-- Upload returns `202 Accepted` and creates a job.
-- Ingestion processes valid and rejected rows.
+- `/api/upload` returns `202 Accepted` and creates a job.
+- `/api/ingestion/upload` continues to support the static dashboard upload-and-ingest flow.
+- Job-based ingestion processes valid and rejected rows.
 - Parquet, retry, checkpoint, and resume paths remain operational.
 - Dashboard APIs return jobs, findings, and rejected rows.
 - Missing token returns `401` when authentication is enabled.
