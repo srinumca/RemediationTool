@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using RemediationTool.API.Authorization;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
 
@@ -19,11 +21,14 @@ public class QuarantineController : ControllerBase
 
     /// <summary>
     /// Queues selected NotYetStarted obsolete records for quarantine.
-    /// If ProcessImmediately=true, the queued records are processed in the same request.
+    /// Only an Admin or System Admin may initiate this action.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminAccess)]
     [HttpPost("queue")]
     [ProducesResponseType(typeof(QuarantineBatchResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Queue([FromBody] QuarantineRequest request, CancellationToken cancellationToken)
     {
         if (request == null)
@@ -47,10 +52,13 @@ public class QuarantineController : ControllerBase
 
     /// <summary>
     /// Processes all records currently in PendingQuarantine.
-    /// Intended for background job / Step Function execution.
+    /// Intended for a background job or Step Function and requires an app token.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.InternalApplication)]
     [HttpPost("run")]
     [ProducesResponseType(typeof(QuarantineBatchResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Run(CancellationToken cancellationToken)
     {
         _logger.LogInformation("[QUARANTINE_RUN_REQUEST] Processing all PendingQuarantine records.");
@@ -62,6 +70,5 @@ public class QuarantineController : ControllerBase
             response.RunId, response.ProcessedCount, response.SucceededCount, response.FailedCount, response.SkippedCount);
 
         return Ok(response);
-        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }
