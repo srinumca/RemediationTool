@@ -70,9 +70,6 @@ try
     var maxUploadRequestBodySizeBytes = ingestionProcessingOptions.MaxUploadFileSizeBytes;
 
     // ─── Request size limits ──────────────────────────────────────────────────
-    // ASP.NET Core rejects multipart/form-data uploads over the default limit
-    // before the controller is reached. Keep Kestrel and multipart form limits
-    // aligned with ingestion validation.
     builder.WebHost.ConfigureKestrel(options =>
     {
         options.Limits.MaxRequestBodySize = maxUploadRequestBodySizeBytes;
@@ -83,9 +80,7 @@ try
         options.MultipartBodyLengthLimit = maxUploadRequestBodySizeBytes;
     });
 
-    // ─── Serilog — read config from appsettings.json ─────────────────────────
-    // Replaces the default ASP.NET Core logging with Serilog.
-    // All ILogger<T> calls throughout the app automatically write through Serilog.
+    // ─── Serilog ──────────────────────────────────────────────────────────────
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
@@ -94,8 +89,6 @@ try
         .Enrich.WithEnvironmentName());
 
     // ─── Authentication & authorization ───────────────────────────────────────
-    // User calls must contain the configured delegated scope. Machine-to-machine
-    // calls must contain the configured application role.
     if (authenticationEnabled)
     {
         builder.Services
@@ -212,9 +205,6 @@ try
         builder.Services.Configure<DynamoDbOptions>(
             builder.Configuration.GetSection(DynamoDbOptions.SectionName));
 
-        // Keep the existing repositories as the read/single-record implementation.
-        // The wrappers only replace high-volume batch write paths with bounded,
-        // fully awaited concurrency and the same retry/idempotency behavior.
         builder.Services.AddSingleton<DynamoDbFileFindingRepository>();
         builder.Services.AddSingleton<IFileFindingRepository, ConcurrentDynamoDbFileFindingRepository>();
         builder.Services.AddSingleton<IIngestionJobAuditRepository, DynamoDbIngestionJobAuditRepository>();
@@ -254,6 +244,8 @@ try
     });
 
     var app = builder.Build();
+    var swaggerEnabled = app.Environment.IsDevelopment()
+        || builder.Configuration.GetValue<bool>("Swagger:Enabled");
 
     // ─── DynamoDB table initialisation ───────────────────────────────────────
     if (persistenceProvider.Equals("DynamoDB", StringComparison.OrdinalIgnoreCase))
@@ -270,7 +262,7 @@ try
             "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000}ms";
     });
 
-    if (app.Environment.IsDevelopment())
+    if (swaggerEnabled)
     {
         app.UseSwagger();
         app.UseSwaggerUI(options =>
@@ -297,8 +289,9 @@ try
     app.MapControllers();
 
     Log.Information(
-        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}",
-        authenticationEnabled);
+        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}; Swagger enabled: {SwaggerEnabled}",
+        authenticationEnabled,
+        swaggerEnabled);
 
     app.Run();
 }
