@@ -12,8 +12,9 @@ Create two app registrations:
 
 1. **GFR Remediation Tool API**
    - Single-tenant web API.
-   - Expose a delegated scope such as `access_as_user`.
-   - The complete scope normally looks like `api://<api-client-id>/access_as_user`.
+   - Expose a delegated scope such as `access_as_user` for Swagger and UI calls.
+   - Expose an application role such as `access_as_application` for machine-to-machine callers.
+   - The complete delegated scope normally looks like `api://<api-client-id>/access_as_user`.
 
 2. **GFR Remediation Tool Swagger**
    - Public/browser client.
@@ -42,7 +43,9 @@ Provide these values through environment-specific configuration or deployment va
     "Instance": "https://login.microsoftonline.com/",
     "TenantId": "<tenant-id>",
     "ClientId": "<api-application-client-id>",
-    "Audience": "api://<api-application-client-id>"
+    "Audience": "api://<api-application-client-id>",
+    "Scopes": "access_as_user",
+    "ApplicationRole": "access_as_application"
   },
   "SwaggerAzureAd": {
     "ClientId": "<swagger-application-client-id>",
@@ -58,11 +61,16 @@ Authentication__Enabled=true
 AzureAd__TenantId=<tenant-id>
 AzureAd__ClientId=<api-client-id>
 AzureAd__Audience=api://<api-client-id>
+AzureAd__Scopes=access_as_user
+AzureAd__ApplicationRole=access_as_application
 SwaggerAzureAd__ClientId=<swagger-client-id>
 SwaggerAzureAd__Scope=api://<api-client-id>/access_as_user
 ```
 
-When authentication is enabled, the application validates the token's issuer, audience, lifetime, and signature. All mapped controller endpoints require an authenticated token through the fallback authorization policy.
+When authentication is enabled, the application validates the token's issuer, audience, lifetime, and signature. The fallback authorization policy protects all mapped controller endpoints and then requires either:
+
+- the delegated `access_as_user` scope for calls made on behalf of a user; or
+- the `access_as_application` application role for daemon or service calls.
 
 ### Swagger login flow
 
@@ -75,8 +83,8 @@ When authentication is enabled, the application validates the token's issuer, au
 
 ### Non-user callers
 
-The ingestion endpoints are called by AWS Step Functions. Before enabling authentication in an environment, configure that machine-to-machine caller to obtain and send a valid Entra application token, or place an approved token-validating gateway in front of the API. Otherwise, those calls will receive `401 Unauthorized`.
+The ingestion endpoints are called by AWS Step Functions. Before enabling authentication in an environment, configure that machine-to-machine caller to obtain and send a valid Entra application token containing the configured `access_as_application` role, or place an approved token-validating gateway in front of the API. Otherwise, those calls will receive `401 Unauthorized` or `403 Forbidden`.
 
-### Roles
+### Business roles
 
-The current change establishes authenticated access. Role-level policies for `System_Admin`, `Admin`, `User`, and `View_Only` should be added after the Entra app roles or AD group-to-role mapping is finalized.
+The current change establishes authenticated API access. Business-role policies for `System_Admin`, `Admin`, `User`, and `View_Only` should be added after the Entra app roles or AD group-to-role mapping is finalized.
