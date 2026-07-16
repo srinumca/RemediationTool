@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using RemediationTool.API.Authorization;
 using RemediationTool.Application.Constants;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Repositories;
@@ -6,6 +8,7 @@ using RemediationTool.Application.Services;
 
 namespace RemediationTool.API.Controllers;
 
+[Authorize(Policy = AuthorizationPolicies.ReadAccess)]
 [ApiController]
 [Route("api/report")]
 public class ReportController : ControllerBase

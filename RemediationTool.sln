@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API", "src/
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastructure.Tests", "tests/RemediationTool.Infrastructure.Tests/RemediationTool.Infrastructure.Tests.csproj", "{A1F83B6B-6E16-4A6F-907F-13243B5195E2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API.Tests", "tests/RemediationTool.API.Tests/RemediationTool.API.Tests.csproj", "{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,5 +40,9 @@ Global
 		{A1F83B6B-6E16-4A6F-907F-13243B5195E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1F83B6B-6E16-4A6F-907F-13243B5195E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1F83B6B-6E16-4A6F-907F-13243B5195E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

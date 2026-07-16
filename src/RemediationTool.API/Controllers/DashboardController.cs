@@ -1,13 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RemediationTool.API.Authorization;
 using RemediationTool.Application.Repositories;
 
 namespace RemediationTool.API.Controllers;
 
 /// <summary>
-/// Read endpoints backing the demo dashboard UI — exposes the 3 demo-critical
-/// tables (Reports/metadata, Success/findings, Errors/rejected rows) for the
-/// "fetch all records for this job" view requested by Chaitanya.
+/// Read endpoints backing the dashboard UI.
 /// </summary>
+[Authorize(Policy = AuthorizationPolicies.ReadAccess)]
 [ApiController]
 [Route("api/dashboard")]
 public class DashboardController : ControllerBase
@@ -29,12 +30,10 @@ public class DashboardController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Returns all ingestion job records (Reports / file metadata table).
-    /// Used to populate the "Job Metadata" view.
-    /// </summary>
     [HttpGet("jobs")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult GetJobs()
     {
         try
@@ -49,12 +48,10 @@ public class DashboardController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns a single job's metadata record. Used to refresh the upload
-    /// success card with live counts after ingestion completes.
-    /// </summary>
     [HttpGet("jobs/{jobId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult GetJob(string jobId)
     {
@@ -74,11 +71,10 @@ public class DashboardController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns all valid findings ingested under the specified job (Success table).
-    /// </summary>
     [HttpGet("jobs/{jobId}/findings")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult GetFindingsByJob(string jobId)
     {
         try
@@ -93,11 +89,10 @@ public class DashboardController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns all rejected rows for the specified job (Errors table).
-    /// </summary>
     [HttpGet("jobs/{jobId}/rejected")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult GetRejectedByJob(string jobId)
     {
         try
@@ -112,11 +107,10 @@ public class DashboardController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns all rejected rows across all jobs (Errors table, unfiltered).
-    /// </summary>
     [HttpGet("rejected")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public IActionResult GetAllRejected()
     {
         try

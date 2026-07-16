@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RemediationTool.API.Authorization;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
 using RemediationTool.Domain.Enum;
@@ -15,12 +17,8 @@ namespace RemediationTool.API.Controllers;
 /// Flow:
 ///   UI → POST /api/upload → S3 (save file) → DynamoDB (create record)
 ///   → return 202 with ReportUID → Step Function picks up and calls Ingestion API
-///
-/// NOTE: Unhandled exceptions are now caught once by GlobalExceptionMiddleware
-/// (registered in Program.cs). The try/catch blocks below remain only for
-/// outcomes this controller wants to handle differently from the default
-/// 500 (validation errors → 400).
 /// </summary>
+[Authorize(Policy = AuthorizationPolicies.AdminAccess)]
 [ApiController]
 [Route("api/upload")]
 public class UploadController : ControllerBase
@@ -40,12 +38,12 @@ public class UploadController : ControllerBase
     /// Accepts an EDG report file (CSV or XLSX), saves it to S3,
     /// creates a report record in DynamoDB with status = NotYetStarted,
     /// and returns 202 Accepted immediately with the ReportUID.
-    ///
-    /// The actual row ingestion is triggered separately via the Ingestion API.
     /// </summary>
     [HttpPost]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(
         IFormFile file,
@@ -67,7 +65,6 @@ public class UploadController : ControllerBase
                 return BadRequest(response);
             }
 
-            // 202 Accepted — file received, ingestion will start via Step Function
             _logger.LogInformation(
                 "[UPLOAD RESPONSE] ReportUid: {ReportUid} — returned 202 Accepted.",
                 response.ReportUid);
@@ -84,7 +81,6 @@ public class UploadController : ControllerBase
                 Message = ex.Message
             });
         }
-        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 
     /// <summary>
@@ -93,6 +89,8 @@ public class UploadController : ControllerBase
     /// </summary>
     [HttpGet("{reportUid}")]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public IActionResult GetStatus(string reportUid)
     {
@@ -107,6 +105,5 @@ public class UploadController : ControllerBase
         }
 
         return Ok(status);
-        // Unexpected exceptions fall through to GlobalExceptionMiddleware.
     }
 }
