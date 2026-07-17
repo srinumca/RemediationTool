@@ -10,8 +10,7 @@ using System.Globalization;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// Persists valid ingestion records temporarily so resume can fall back to
-/// DynamoDB when a Parquet working file is unavailable or unreadable.
+/// Persists valid ingestion records temporarily while target persistence runs.
 /// </summary>
 public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
 {
@@ -113,7 +112,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
         catch (AggregateException ex)
         {
             throw new InvalidOperationException(
-                $"Staging save failed for job {jobId}. A subsequent retry first removes partial staging rows and recreates the complete ordered recovery set.",
+                $"Staging save failed for job {jobId}. A subsequent retry first removes partial staging rows and recreates the complete ordered set.",
                 ex.Flatten());
         }
 
@@ -122,92 +121,6 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             jobId,
             validFindings.Count,
             batchCount);
-    }
-
-    public List<FileFinding> GetValidFindingsAfter(
-        string jobId,
-        int lastProcessedRecordCount)
-    {
-        if (string.IsNullOrWhiteSpace(jobId))
-            return new List<FileFinding>();
-
-        _logger.LogInformation(
-            "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
-            jobId,
-            lastProcessedRecordCount);
-
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                KeyConditionExpression = "jobId = :jobId AND sequenceNumber > :lastSeq",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":jobId"] = new AttributeValue { S = jobId },
-                    [":lastSeq"] = new AttributeValue
-                    {
-                        N = lastProcessedRecordCount.ToString(CultureInfo.InvariantCulture)
-                    }
-                },
-                ScanIndexForward = true,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            findings.EnsureCapacity(findings.Count + response.Items.Count);
-            foreach (var item in response.Items)
-            {
-                if (item.TryGetValue("finding", out var findingAttribute)
-                    && findingAttribute.M != null)
-                {
-                    findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttribute.M));
-                }
-            }
-
-            lastKey = GetNextKey(response.LastEvaluatedKey);
-        }
-        while (lastKey != null);
-
-        _logger.LogInformation(
-            "[STAGING_RESUME_READ_COMPLETE] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}, Records:{Records}",
-            jobId,
-            lastProcessedRecordCount,
-            findings.Count);
-
-        return findings;
-    }
-
-    public int CountByJobId(string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId))
-            return 0;
-
-        var count = 0;
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                KeyConditionExpression = "jobId = :jobId",
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":jobId"] = new AttributeValue { S = jobId }
-                },
-                Select = Select.COUNT,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            count += response.Count ?? 0;
-            lastKey = GetNextKey(response.LastEvaluatedKey);
-        }
-        while (lastKey != null);
-
-        return count;
     }
 
     public void DeleteByJobId(string jobId)
