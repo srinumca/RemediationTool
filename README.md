@@ -2,19 +2,23 @@
 
 ## Current application scope
 
-This phase of the application supports only the inbound-file workflow and its operational dashboard:
+This phase supports only the two-step inbound-file workflow:
 
-- Upload an EDG CSV or XLSX file.
-- Store the source file in the configured storage provider.
-- Create and track ingestion jobs.
-- Parse and validate inbound records.
-- Persist valid findings and rejected rows.
-- Create and validate the Parquet working file.
-- Process findings in batches with retry and checkpoint support.
-- Resume failed or partially completed ingestion jobs.
-- Display jobs, findings, and rejected rows through dashboard APIs and the static dashboard page.
+1. Upload an EDG CSV or XLSX file.
+2. Process the uploaded file by its generated ReportUID.
 
-Quarantine, restore, deletion, retention deletion, and separate report APIs are intentionally outside the current phase.
+The application continues to:
+
+- store source files in S3 or local storage;
+- create and update ingestion job records;
+- parse and validate inbound records;
+- persist valid findings and rejected rows;
+- create and verify the Parquet working file;
+- process findings in batches with bounded concurrency and retry;
+- write checkpoint progress and processing summaries;
+- record application and audit logs.
+
+Dashboard, status, direct upload-and-ingest, and resume APIs are intentionally outside the current phase.
 
 ## Retained APIs
 
@@ -22,27 +26,31 @@ Quarantine, restore, deletion, retention deletion, and separate report APIs are 
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/upload` | Uploads the source file and creates an ingestion job for asynchronous processing. |
-| `GET` | `/api/upload/{reportUid}` | Returns the upload/job status. |
+| `POST` | `/api/upload` | Stores the source file and creates an ingestion job. Returns `202 Accepted` with the generated ReportUID. |
 
 ### Ingestion
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/ingestion/upload` | Uploads and ingests a file in one request for the retained dashboard flow. |
-| `POST` | `/api/ingestion/{reportUid}` | Processes a previously uploaded file. |
-| `POST` | `/api/ingestion/{reportUid}/resume` | Resumes from the latest checkpoint. |
-| `GET` | `/api/ingestion/{reportUid}/status` | Returns ingestion status. |
+| `POST` | `/api/ingestion/{reportUid}` | Downloads and processes the previously uploaded file identified by ReportUID. |
 
-### Dashboard
+## Processing flow
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/api/dashboard/jobs` | Returns ingestion jobs. |
-| `GET` | `/api/dashboard/jobs/{jobId}` | Returns one ingestion job. |
-| `GET` | `/api/dashboard/jobs/{jobId}/findings` | Returns successful findings for a job. |
-| `GET` | `/api/dashboard/jobs/{jobId}/rejected` | Returns rejected rows for a job. |
-| `GET` | `/api/dashboard/rejected` | Returns rejected rows across jobs. |
+```text
+POST /api/upload
+        ↓
+Store source file and metadata
+        ↓
+Create ingestion job and return ReportUID
+        ↓
+POST /api/ingestion/{reportUid}
+        ↓
+Download, parse and validate
+        ↓
+Persist rejected rows and valid findings
+        ↓
+Write Parquet, checkpoints, summary and audit logs
+```
 
 ## Retained supporting capabilities
 
@@ -54,20 +62,19 @@ Quarantine, restore, deletion, retention deletion, and separate report APIs are 
 - FluentValidation.
 - S3 and local storage implementations.
 - DynamoDB and JSON persistence implementations.
-- CSV/XLSX parsing.
-- Parquet working-file processing.
+- CSV and XLSX parsing.
+- Parquet working-file creation and verification.
 - Batch persistence with bounded concurrency and retry.
-- Checkpoint and resume support.
-- Static dashboard UI.
+- Checkpoint progress writes.
+- Temporary staging write and cleanup.
+- Rejected-row persistence.
 
 ## Authorization matrix
 
-| Endpoint area | Required caller when authentication is enabled |
+| Endpoint | Required caller when authentication is enabled |
 |---|---|
-| Upload API and upload status | User token with `access_as_user` and `Admin` or `System_Admin` role |
-| Dashboard direct upload-and-ingest | User token with `access_as_user` and `Admin` or `System_Admin` role |
-| Job-based ingestion, resume, and ingestion status | App token with `access_as_application` role |
-| Dashboard read APIs | User token with `access_as_user` and `System_Admin`, `Admin`, `User`, or `View_Only` role |
+| `POST /api/upload` | User token with `access_as_user` and `Admin` or `System_Admin` role |
+| `POST /api/ingestion/{reportUid}` | Application token with `access_as_application` role |
 
 Authentication is disabled by default until the real Microsoft Entra registration values are supplied.
 
@@ -79,7 +86,7 @@ Create two app registrations:
    - Single-tenant API.
    - Delegated scope: `access_as_user`.
    - Application role: `access_as_application`.
-   - User roles: `System_Admin`, `Admin`, `User`, and `View_Only`.
+   - User roles required by the retained upload API: `System_Admin` and `Admin`.
 
 2. **GFR Remediation Tool Swagger**
    - Public browser client.
@@ -107,11 +114,9 @@ SwaggerAzureAd__ClientId=<swagger-client-id>
 SwaggerAzureAd__Scope=api://<api-client-id>/access_as_user
 Authorization__Roles__SystemAdmin=System_Admin
 Authorization__Roles__Admin=Admin
-Authorization__Roles__User=User
-Authorization__Roles__ViewOnly=View_Only
 ```
 
-AWS Step Functions or another approved machine caller must obtain an Entra app-only access token containing `access_as_application` before authentication is enabled.
+The caller of the ingestion endpoint must obtain an Entra app-only token containing the `access_as_application` role before authentication is enabled.
 
 ## Validation
 
@@ -125,11 +130,11 @@ dotnet test RemediationTool.sln
 
 Then verify:
 
-- `/api/upload` returns `202 Accepted` and creates a job.
-- `/api/ingestion/upload` continues to support the static dashboard upload-and-ingest flow.
-- Job-based ingestion processes valid and rejected rows.
-- Parquet, retry, checkpoint, and resume paths remain operational.
-- Dashboard APIs return jobs, findings, and rejected rows.
-- Missing token returns `401` when authentication is enabled.
-- Invalid role/scope returns `403`.
+- `POST /api/upload` returns `202 Accepted`, stores the file and creates the job record.
+- `POST /api/ingestion/{reportUid}` processes the previously uploaded file.
+- Valid findings and rejected rows are persisted.
+- Parquet writing and verification remain operational.
+- Batch retry, checkpoint writes, summaries and audit logs remain operational.
+- Missing tokens return `401` when authentication is enabled.
+- Invalid roles or scopes return `403`.
 - Valid user and application tokens access only their intended endpoints.
