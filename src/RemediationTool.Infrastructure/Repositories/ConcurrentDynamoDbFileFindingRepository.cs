@@ -11,8 +11,7 @@ using System.Diagnostics;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// Persists ingestion findings with bounded DynamoDB concurrency and provides
-/// the dashboard lookup by ingestion job.
+/// Persists ingestion findings with bounded DynamoDB concurrency.
 /// </summary>
 public sealed class ConcurrentDynamoDbFileFindingRepository :
     IFileFindingRepository,
@@ -129,9 +128,6 @@ public sealed class ConcurrentDynamoDbFileFindingRepository :
             throw;
         }
     }
-
-    public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
-        => _inner.GetByIngestionJobId(ingestionJobId);
 
     private static int CalculateBatchCount(int recordCount)
         => (recordCount + DynamoDbBatchLimit - 1) / DynamoDbBatchLimit;
