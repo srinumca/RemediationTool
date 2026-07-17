@@ -45,12 +45,6 @@ public sealed class ConcurrentDynamoDbRejectedRowRepository :
         _logger = logger;
     }
 
-    public List<RejectedRowDetail> GetAll()
-        => _inner.GetAll();
-
-    public List<RejectedRowDetail> GetByJobId(string jobId)
-        => _inner.GetByJobId(jobId);
-
     public void AddRange(List<RejectedRowDetail> rejectedRows)
         => AddRangeAsync(rejectedRows).GetAwaiter().GetResult();
 
