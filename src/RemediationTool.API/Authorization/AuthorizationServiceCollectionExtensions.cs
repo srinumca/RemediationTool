@@ -16,30 +16,16 @@ public static class AuthorizationServiceCollectionExtensions
             ?? RemediationRoleDefaults.SystemAdmin;
         var adminRole = configuration["Authorization:Roles:Admin"]
             ?? RemediationRoleDefaults.Admin;
-        var userRole = configuration["Authorization:Roles:User"]
-            ?? RemediationRoleDefaults.User;
-        var viewOnlyRole = configuration["Authorization:Roles:ViewOnly"]
-            ?? RemediationRoleDefaults.ViewOnly;
 
         services.AddAuthorization(options =>
         {
             if (!authenticationEnabled)
             {
                 // Keep local environments usable until Entra registrations are supplied.
-                AddDisabledPolicy(options, AuthorizationPolicies.ReadAccess);
                 AddDisabledPolicy(options, AuthorizationPolicies.AdminAccess);
                 AddDisabledPolicy(options, AuthorizationPolicies.InternalApplication);
                 return;
             }
-
-            AddDelegatedRolePolicy(
-                options,
-                AuthorizationPolicies.ReadAccess,
-                delegatedScope,
-                systemAdminRole,
-                adminRole,
-                userRole,
-                viewOnlyRole);
 
             AddDelegatedRolePolicy(
                 options,
