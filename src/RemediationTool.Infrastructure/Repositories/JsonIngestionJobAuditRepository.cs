@@ -27,14 +27,6 @@ public class JsonIngestionJobAuditRepository : IIngestionJobAuditRepository
             JsonFileHelper.WriteAllText(_filePath, "[]");
     }
 
-    public List<IngestionJobAudit> GetAll()
-    {
-        lock (_lock)
-        {
-            return ReadAllInternal();
-        }
-    }
-
     public IngestionJobAudit? GetByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId))
