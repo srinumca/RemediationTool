@@ -1,4 +1,4 @@
-﻿using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Entities;
 
 namespace RemediationTool.Application.Interfaces;
 
@@ -10,11 +10,6 @@ public interface IIngestionWorkingFileStrategy
         string jobId,
         string inboundFileName,
         IReadOnlyList<FileFinding> validFindings,
-        CancellationToken cancellationToken = default);
-
-    Task<List<FileFinding>> ReadAfterAsync(
-        string workingFilePath,
-        int lastProcessedRecordCount,
         CancellationToken cancellationToken = default);
 }
 

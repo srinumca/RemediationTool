@@ -46,31 +46,6 @@ public sealed class JsonFileFindingRepository : IFileFindingRepository
         }
     }
 
-    public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
-    {
-        if (string.IsNullOrWhiteSpace(ingestionJobId))
-            return Array.Empty<FileFinding>();
-
-        lock (_lock)
-        {
-            var result = new List<FileFinding>();
-
-            foreach (var finding in ReadAll())
-            {
-                if (string.Equals(
-                        finding.IngestionJobId,
-                        ingestionJobId,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add(finding);
-                }
-            }
-
-            result.Sort(static (left, right) => left.LoadDateUtc.CompareTo(right.LoadDateUtc));
-            return result;
-        }
-    }
-
     private List<FileFinding> ReadAll()
     {
         var json = JsonFileHelper.ReadAllText(_filePath);

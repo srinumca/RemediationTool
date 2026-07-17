@@ -7,7 +7,7 @@ namespace RemediationTool.Application.Services;
 
 /// <summary>
 /// Selects asynchronous high-volume implementations when available and keeps
-/// the existing synchronous/buffered contracts as an explicit legacy fallback.
+/// synchronous implementations as an explicit fallback.
 /// </summary>
 internal static class IngestionAsyncIo
 {
@@ -72,42 +72,6 @@ internal static class IngestionAsyncIo
             jobId,
             findings as List<FileFinding>
             ?? findings.ToList());
-    }
-
-    public static async Task<int> CountStagedAsync(
-        IIngestionStagingRepository repository,
-        string jobId,
-        IngestionProcessingOptions options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (repository is IAsyncIngestionStagingRepository asyncRepository)
-            return await asyncRepository.CountByJobIdAsync(jobId, cancellationToken);
-
-        EnsureLegacyFallback(options, "staging repository");
-        return repository.CountByJobId(jobId);
-    }
-
-    public static async Task<List<FileFinding>> ReadStagedAfterAsync(
-        IIngestionStagingRepository repository,
-        string jobId,
-        int lastProcessedRecordCount,
-        IngestionProcessingOptions options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (repository is IAsyncIngestionStagingRepository asyncRepository)
-        {
-            return await asyncRepository.GetValidFindingsAfterAsync(
-                jobId,
-                lastProcessedRecordCount,
-                cancellationToken);
-        }
-
-        EnsureLegacyFallback(options, "staging repository");
-        return repository.GetValidFindingsAfter(jobId, lastProcessedRecordCount);
     }
 
     public static async Task DeleteStagingAsync(

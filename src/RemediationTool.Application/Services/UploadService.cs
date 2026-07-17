@@ -12,7 +12,7 @@ using System.Text.Json;
 namespace RemediationTool.Application.Services;
 
 /// <summary>
-/// Upload Service — handles only the source-file upload step.
+/// Handles the source-file upload step before asynchronous ingestion.
 /// </summary>
 public class UploadService
 {
@@ -140,31 +140,6 @@ public class UploadService
             UploadedAtUtc = uploadedAtUtc,
             Status = IngestionJobStatus.Started,
             Message = $"File uploaded. ReportUid: {reportUid}. Ingestion will begin shortly."
-        };
-    }
-
-    public UploadResponse? GetStatus(string reportUid)
-    {
-        if (string.IsNullOrWhiteSpace(reportUid))
-            return null;
-
-        var audit = _jobAuditRepository.GetByJobId(reportUid);
-        if (audit == null)
-            return null;
-
-        return new UploadResponse
-        {
-            IsSuccess = true,
-            ReportUid = audit.ReportUid,
-            JobId = audit.JobId,
-            InboundFileName = audit.InboundFileName,
-            FileSizeBytes = audit.FileSizeBytes,
-            S3FolderPath = audit.S3FolderPath,
-            SourceFilePath = audit.SourceFilePath,
-            MetadataJsonPath = audit.MetadataJsonPath,
-            UploadedAtUtc = audit.StartTimestampUtc,
-            Status = audit.Status,
-            Message = audit.Status.ToString()
         };
     }
 

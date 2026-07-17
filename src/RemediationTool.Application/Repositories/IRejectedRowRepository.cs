@@ -1,12 +1,11 @@
-﻿using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Entities;
 
 namespace RemediationTool.Application.Repositories;
 
+/// <summary>
+/// Persistence contract required by ingestion rejected-row writes.
+/// </summary>
 public interface IRejectedRowRepository
 {
-    List<RejectedRowDetail> GetAll();
-
-    List<RejectedRowDetail> GetByJobId(string jobId);
-
     void AddRange(List<RejectedRowDetail> rejectedRows);
 }
