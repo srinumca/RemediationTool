@@ -3,11 +3,9 @@ using RemediationTool.Domain.Entities;
 namespace RemediationTool.Application.Repositories;
 
 /// <summary>
-/// Persistence contract required by ingestion writes and dashboard job views.
+/// Persistence contract required by ingestion finding writes.
 /// </summary>
 public interface IFileFindingRepository
 {
     void AddRange(IReadOnlyList<FileFinding> findings);
-
-    IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId);
 }
