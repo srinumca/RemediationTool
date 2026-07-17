@@ -9,7 +9,7 @@ using RemediationTool.Infrastructure.DynamoDB;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// DynamoDB implementation of IRejectedRowRepository.
+/// DynamoDB implementation used to persist rejected ingestion rows.
 /// </summary>
 public class DynamoDbRejectedRowRepository : IRejectedRowRepository
 {
@@ -28,61 +28,6 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
         _dynamoDb = dynamoDb;
         _tableName = options.Value.RejectedRowsTableName;
         _logger = logger;
-    }
-
-    public List<RejectedRowDetail> GetAll()
-    {
-        var rows = new List<RejectedRowDetail>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.ScanAsync(new ScanRequest
-            {
-                TableName = _tableName,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            AddMappedRows(rows, response.Items);
-            lastKey = GetNextKey(response.LastEvaluatedKey);
-        }
-        while (lastKey != null);
-
-        return rows;
-    }
-
-    public List<RejectedRowDetail> GetByJobId(string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId))
-            return new List<RejectedRowDetail>();
-
-        var rows = new List<RejectedRowDetail>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                IndexName = "uid-rowCreatedDateOn-index",
-                KeyConditionExpression = "#uid = :uid",
-                ExpressionAttributeNames = new Dictionary<string, string>
-                {
-                    ["#uid"] = "uid"
-                },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":uid"] = new AttributeValue { S = jobId }
-                },
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            AddMappedRows(rows, response.Items);
-            lastKey = GetNextKey(response.LastEvaluatedKey);
-        }
-        while (lastKey != null);
-
-        return rows;
     }
 
     public void AddRange(List<RejectedRowDetail> rejectedRows)
@@ -167,20 +112,4 @@ public class DynamoDbRejectedRowRepository : IRejectedRowRepository
             };
         }
     }
-
-    private static void AddMappedRows(
-        List<RejectedRowDetail> destination,
-        List<Dictionary<string, AttributeValue>> items)
-    {
-        if (items.Count == 0)
-            return;
-
-        destination.EnsureCapacity(destination.Count + items.Count);
-        foreach (var item in items)
-            destination.Add(DynamoDbAttributeMap.ToRejectedRowDetail(item));
-    }
-
-    private static Dictionary<string, AttributeValue>? GetNextKey(
-        Dictionary<string, AttributeValue>? lastEvaluatedKey)
-        => lastEvaluatedKey?.Count > 0 ? lastEvaluatedKey : null;
 }
