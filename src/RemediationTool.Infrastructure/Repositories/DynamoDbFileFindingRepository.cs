@@ -9,7 +9,7 @@ using RemediationTool.Infrastructure.DynamoDB;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// DynamoDB finding persistence required by ingestion and dashboard job views.
+/// DynamoDB finding persistence required by ingestion.
 /// </summary>
 public class DynamoDbFileFindingRepository : IFileFindingRepository
 {
@@ -85,9 +85,6 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
             batches.Length);
     }
 
-    public IReadOnlyList<FileFinding> GetByIngestionJobId(string ingestionJobId)
-        => QueryGsi("jobId-loadDateUtc-index", "#jobId", "jobId", ingestionJobId);
-
     private void ExecuteBatchWriteWithRetry(
         List<WriteRequest> writeRequests,
         string operationName,
@@ -156,46 +153,6 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
         }
     }
 
-    private IReadOnlyList<FileFinding> QueryGsi(
-        string indexName,
-        string expressionAttributeName,
-        string attributeName,
-        string value,
-        bool scanIndexForward = false)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return Array.Empty<FileFinding>();
-
-        var findings = new List<FileFinding>();
-        Dictionary<string, AttributeValue>? lastKey = null;
-
-        do
-        {
-            var response = _dynamoDb.QueryAsync(new QueryRequest
-            {
-                TableName = _tableName,
-                IndexName = indexName,
-                KeyConditionExpression = $"{expressionAttributeName} = :val",
-                ExpressionAttributeNames = new Dictionary<string, string>
-                {
-                    [expressionAttributeName] = attributeName
-                },
-                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
-                {
-                    [":val"] = new AttributeValue { S = value }
-                },
-                ScanIndexForward = scanIndexForward,
-                ExclusiveStartKey = lastKey
-            }).GetAwaiter().GetResult();
-
-            AddMappedFindings(findings, response.Items);
-            lastKey = GetNextKey(response.LastEvaluatedKey);
-        }
-        while (lastKey != null);
-
-        return findings;
-    }
-
     private static List<WriteRequest> BuildPutRequests(FileFinding[] findings)
     {
         var requests = new List<WriteRequest>(findings.Length);
@@ -212,22 +169,6 @@ public class DynamoDbFileFindingRepository : IFileFindingRepository
 
         return requests;
     }
-
-    private static void AddMappedFindings(
-        List<FileFinding> destination,
-        List<Dictionary<string, AttributeValue>> items)
-    {
-        if (items.Count == 0)
-            return;
-
-        destination.EnsureCapacity(destination.Count + items.Count);
-        foreach (var item in items)
-            destination.Add(DynamoDbAttributeMap.ToFileFinding(item));
-    }
-
-    private static Dictionary<string, AttributeValue>? GetNextKey(
-        Dictionary<string, AttributeValue>? lastEvaluatedKey)
-        => lastEvaluatedKey?.Count > 0 ? lastEvaluatedKey : null;
 
     private sealed record BatchWriteWorkItem(
         int ChunkNumber,
