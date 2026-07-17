@@ -1,4 +1,4 @@
-﻿using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Microsoft.Extensions.Options;
 using RemediationTool.Application.Interfaces;
@@ -8,9 +8,7 @@ using RemediationTool.Infrastructure.DynamoDB;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// DynamoDB implementation of IIngestionCheckpointRepository.
-/// Table: gfr-ingestion-checkpoints-dev
-/// Primary key: jobId (HASH) — camelCase
+/// DynamoDB implementation used to persist ingestion checkpoints.
 /// </summary>
 public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointRepository
 {
@@ -25,33 +23,9 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
         _tableName = options.Value.CheckpointsTableName;
     }
 
-    /// <summary>
-    /// Retrieves an IngestionCheckpoint by its jobId from DynamoDB.
-    /// </summary>
-    /// <param name="jobId">The jobId of the ingestion checkpoint.</param>
-    /// <returns>The IngestionCheckpoint if found; otherwise, null.</returns>
-    public IngestionCheckpoint? GetByJobId(string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId)) return null;
-
-        var response = _dynamoDb.GetItemAsync(new GetItemRequest
-        {
-            TableName = _tableName,
-            Key = new Dictionary<string, AttributeValue>
-            {
-                ["jobId"] = new AttributeValue { S = jobId }  // camelCase
-            }
-        }).GetAwaiter().GetResult();
-
-        return response.Item?.Count > 0
-            ? DynamoDbAttributeMap.ToIngestionCheckpoint(response.Item)
-            : null;
-    }
-
     public void Upsert(IngestionCheckpoint checkpoint)
     {
-        if (checkpoint == null)
-            throw new ArgumentNullException(nameof(checkpoint));
+        ArgumentNullException.ThrowIfNull(checkpoint);
 
         checkpoint.LastCheckpointUtc = DateTime.UtcNow;
 
