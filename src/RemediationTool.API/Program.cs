@@ -225,13 +225,6 @@ try
     builder.Services.AddScoped<IngestionService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
-    // ─── CORS (for dashboard) ─────────────────────────────────────────────────
-    builder.Services.AddCors(options =>
-    {
-        options.AddDefaultPolicy(policy =>
-            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
-    });
-
     var app = builder.Build();
     var swaggerEnabled = app.Environment.IsDevelopment()
         || builder.Configuration.GetValue<bool>("Swagger:Enabled");
@@ -265,9 +258,6 @@ try
             }
         });
     }
-
-    app.UseCors();
-    app.UseStaticFiles();
 
     if (authenticationEnabled)
     {
