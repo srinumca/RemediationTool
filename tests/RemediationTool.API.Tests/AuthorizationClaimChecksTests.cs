@@ -47,16 +47,14 @@ public class AuthorizationClaimChecksTests
     }
 
     [Fact]
-    public void HasAnyRole_ReturnsTrue_WhenOneConfiguredRoleMatches()
+    public void HasAnyRole_ReturnsTrue_WhenRetainedRoleMatches()
     {
-        var user = CreateUser(new Claim(ClaimTypes.Role, "View_Only"));
+        var user = CreateUser(new Claim(ClaimTypes.Role, "Admin"));
 
         var result = AuthorizationClaimChecks.HasAnyRole(
             user,
             "System_Admin",
-            "Admin",
-            "User",
-            "View_Only");
+            "Admin");
 
         Assert.True(result);
     }
