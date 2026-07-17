@@ -7,27 +7,21 @@ namespace RemediationTool.API.Authorization;
 /// </summary>
 public static class AuthorizationPolicies
 {
-    public const string ReadAccess = "Remediation.ReadAccess";
     public const string AdminAccess = "Remediation.AdminAccess";
     public const string InternalApplication = "Remediation.InternalApplication";
 }
 
 /// <summary>
-/// Default Entra app-role values. Values can be overridden through
-/// Authorization:Roles configuration without changing controller code.
+/// Default Entra app-role values used by the retained user-facing API.
 /// </summary>
 public static class RemediationRoleDefaults
 {
     public const string SystemAdmin = "System_Admin";
     public const string Admin = "Admin";
-    public const string User = "User";
-    public const string ViewOnly = "View_Only";
 }
 
 /// <summary>
 /// Claim checks shared by authorization policies.
-/// Microsoft Entra can emit scopes and roles using different claim type names,
-/// so both standard forms are accepted.
 /// </summary>
 public static class AuthorizationClaimChecks
 {
@@ -69,9 +63,7 @@ public static class AuthorizationClaimChecks
     }
 
     public static bool HasAnyRole(ClaimsPrincipal user, params string[] requiredRoles)
-    {
-        return requiredRoles.Any(role => HasRole(user, role));
-    }
+        => requiredRoles.Any(role => HasRole(user, role));
 
     private static IEnumerable<string> SplitClaimValues(string value)
     {
