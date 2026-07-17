@@ -28,32 +28,6 @@ public class JsonRejectedRowRepository : IRejectedRowRepository
             JsonFileHelper.WriteAllText(_filePath, "[]");
     }
 
-    public List<RejectedRowDetail> GetAll()
-    {
-        lock (_lock)
-        {
-            return ReadAllInternal();
-        }
-    }
-
-    public List<RejectedRowDetail> GetByJobId(string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId))
-            return new List<RejectedRowDetail>();
-
-        lock (_lock)
-        {
-            var result = new List<RejectedRowDetail>();
-            foreach (var row in ReadAllInternal())
-            {
-                if (string.Equals(row.JobId, jobId, StringComparison.OrdinalIgnoreCase))
-                    result.Add(row);
-            }
-
-            return result;
-        }
-    }
-
     public void AddRange(List<RejectedRowDetail> rejectedRows)
     {
         if (rejectedRows == null || rejectedRows.Count == 0)
