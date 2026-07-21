@@ -79,7 +79,7 @@ internal static class CsvWorkloadGenerator
             };
 
             await writer.WriteLineAsync(
-                string.Join(',', values.Select(Escape)).AsMemory(),
+                string.Join(",", values.Select(Escape)).AsMemory(),
                 cancellationToken);
         }
 
