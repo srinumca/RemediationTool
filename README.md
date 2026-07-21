@@ -55,8 +55,8 @@ Write Parquet, checkpoints, summary and audit logs
 ## Retained supporting capabilities
 
 - Microsoft Entra ID JWT validation.
-- Swagger OAuth 2.0 Authorization Code flow with PKCE.
-- User-role and application-role authorization.
+- Optional Swagger OAuth 2.0 Authorization Code flow with PKCE.
+- Authenticated-token and admin-role authorization.
 - Serilog application, audit, and HTTP request logging.
 - Global exception handling.
 - FluentValidation.
@@ -73,26 +73,16 @@ Write Parquet, checkpoints, summary and audit logs
 
 | Endpoint | Required caller when authentication is enabled |
 |---|---|
-| `POST /api/upload` | User token with `access_as_user` and `Admin` or `System_Admin` role |
-| `POST /api/ingestion/{reportUid}` | Application token with `access_as_application` role |
+| `POST /api/upload` | Authenticated token with `Admin` or `System_Admin` role |
+| `POST /api/ingestion/{reportUid}` | Any authenticated token issued for this API |
 
 Authentication is disabled by default until the real Microsoft Entra registration values are supplied.
 
 ## Microsoft Entra configuration
 
-Create two app registrations:
+Create the API app registration as a single-tenant API. The retained upload API expects the `System_Admin` or `Admin` role when role-based upload authorization is required.
 
-1. **GFR Remediation Tool API**
-   - Single-tenant API.
-   - Delegated scope: `access_as_user`.
-   - Application role: `access_as_application`.
-   - User roles required by the retained upload API: `System_Admin` and `Admin`.
-
-2. **GFR Remediation Tool Swagger**
-   - Public browser client.
-   - Authorization Code flow with PKCE.
-   - Permission to request the API's `access_as_user` scope.
-   - No client secret in Swagger.
+A separate Swagger browser client is optional. When configured, it uses Authorization Code flow with PKCE and requests the API scope supplied through `SwaggerAzureAd:Scope`. No client secret is stored in Swagger.
 
 Local Swagger redirect URI:
 
@@ -100,23 +90,26 @@ Local Swagger redirect URI:
 https://localhost:58207/swagger/oauth2-redirect.html
 ```
 
-Environment variables:
+Required API environment variables:
 
 ```text
 Authentication__Enabled=true
-Swagger__Enabled=true
 AzureAd__TenantId=<tenant-id>
 AzureAd__ClientId=<api-client-id>
 AzureAd__Audience=api://<api-client-id>
-AzureAd__Scopes=access_as_user
-AzureAd__ApplicationRole=access_as_application
-SwaggerAzureAd__ClientId=<swagger-client-id>
-SwaggerAzureAd__Scope=api://<api-client-id>/access_as_user
 Authorization__Roles__SystemAdmin=System_Admin
 Authorization__Roles__Admin=Admin
 ```
 
-The caller of the ingestion endpoint must obtain an Entra app-only token containing the `access_as_application` role before authentication is enabled.
+Optional Swagger OAuth environment variables:
+
+```text
+Swagger__Enabled=true
+SwaggerAzureAd__ClientId=<swagger-client-id>
+SwaggerAzureAd__Scope=<configured-api-scope>
+```
+
+The API can validate and authorize bearer tokens without `AzureAd:Scopes` or `AzureAd:ApplicationRole`. Swagger OAuth is enabled only when both optional Swagger settings are present.
 
 ## Validation
 
@@ -135,6 +128,6 @@ Then verify:
 - Valid findings and rejected rows are persisted.
 - Parquet writing and verification remain operational.
 - Batch retry, checkpoint writes, summaries and audit logs remain operational.
-- Missing tokens return `401` when authentication is enabled.
-- Invalid roles or scopes return `403`.
-- Valid user and application tokens access only their intended endpoints.
+- Missing or invalid tokens return `401` when authentication is enabled.
+- Authenticated callers without the required upload role receive `403` for `POST /api/upload`.
+- Any valid authenticated token issued for the API can call `POST /api/ingestion/{reportUid}`.
