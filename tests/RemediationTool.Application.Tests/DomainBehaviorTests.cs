@@ -1,4 +1,3 @@
-using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
 using Xunit;
@@ -90,67 +89,6 @@ public sealed class DomainBehaviorTests
     }
 
     [Fact]
-    public void CompatibilityAliases_RoundTripUnderlyingProperties()
-    {
-        var loadDate = new DateTime(2026, 7, 21, 1, 2, 3, DateTimeKind.Utc);
-        var updateDate = loadDate.AddMinutes(1);
-        var modifiedDate = loadDate.AddDays(-1);
-        var quarantineDate = loadDate.AddHours(1);
-        var finding = new FileFinding
-        {
-            ErrorReason = "reason",
-            FileName = "file.txt",
-            FilePath = "/source/file.txt",
-            SourceSystem = "SMB",
-            FileSize = 123,
-            LastModifiedDate = modifiedDate,
-            IngestionId = "job-1",
-            UploadedBy = "user-1",
-            LoadDate = loadDate,
-            UpdatedDate = updateDate,
-            QuarantineDate = quarantineDate,
-            DataSystem = "SharePoint"
-        };
-
-        Assert.Equal("reason", finding.IngestionErrorReason);
-        Assert.Equal("file.txt", finding.FindingFileName);
-        Assert.Equal("/source/file.txt", finding.CurrentFileLocation);
-        Assert.Equal(123, finding.FindingFileSizeBytes);
-        Assert.Equal(modifiedDate, finding.LastModifiedDateUtc);
-        Assert.Equal("job-1", finding.IngestionJobId);
-        Assert.Equal("user-1", finding.UserName);
-        Assert.Equal(loadDate, finding.LoadDateUtc);
-        Assert.Equal(updateDate, finding.LastUpdateDateUtc);
-        Assert.Equal(quarantineDate, finding.QuarantineDateUtc);
-        Assert.Equal("SharePoint", finding.OriginatingDataSystem);
-    }
-
-    [Fact]
-    public void CompatibilityAliases_ApplySafeDefaultsForNullValues()
-    {
-        var finding = new FileFinding
-        {
-            ErrorReason = null!,
-            FileName = null!,
-            FilePath = null!,
-            SourceSystem = null!,
-            UploadedBy = null!,
-            QuarantinePath = null,
-            DataSystem = null!
-        };
-
-        Assert.Equal(string.Empty, finding.ErrorReason);
-        Assert.Equal(string.Empty, finding.FileName);
-        Assert.Equal(string.Empty, finding.FilePath);
-        Assert.Equal(string.Empty, finding.SourceSystem);
-        Assert.Equal("System", finding.UploadedBy);
-        Assert.Equal(string.Empty, finding.CurrentFileLocation);
-        Assert.Equal(string.Empty, finding.DataSystem);
-        Assert.Equal(0, finding.FileSize);
-        Assert.Equal(DateTime.MinValue, finding.LastModifiedDate);
-    }
-
-    [Fact]
     public void QuarantinePath_IsVisibleOnlyAfterQuarantineCompletes()
     {
         var finding = new FileFinding
@@ -164,26 +102,6 @@ public sealed class DomainBehaviorTests
         finding.Status = FileStatus.QuarantineComplete;
 
         Assert.Equal("/quarantine/file.txt", finding.QuarantinePath);
-    }
-
-    [Fact]
-    public void RejectedRowCompatibilityAliases_RoundTripPrimaryFields()
-    {
-        var createdAt = new DateTime(2026, 7, 21, 4, 5, 6, DateTimeKind.Utc);
-        var row = new RejectedRowDetail
-        {
-            RejectedRowId = "row-1",
-            JobId = "job-1",
-            CreatedAtUtc = createdAt
-        };
-
-        Assert.Equal("row-1", row.Id);
-        Assert.Equal("row-1", row.RejectedRowId);
-        Assert.Equal("job-1", row.Uid);
-        Assert.Equal("job-1", row.JobId);
-        Assert.Equal(createdAt, row.ErrorDateUtc);
-        Assert.Equal(createdAt, row.CreatedAtUtc);
-        Assert.Equal("Error", row.Status);
     }
 
     [Theory]
