@@ -169,11 +169,15 @@ public sealed class UploadServiceTests
         fixture.JobAuditRepository.VerifyNoOtherCalls();
     }
 
-    private static FormFile CreateFormFile(string fileName, string content)
+    private static IFormFile CreateFormFile(string fileName, string content)
     {
         var bytes = Encoding.UTF8.GetBytes(content);
-        var stream = new MemoryStream(bytes);
-        return new FormFile(stream, 0, bytes.Length, "file", fileName);
+        var file = new Mock<IFormFile>(MockBehavior.Strict);
+        file.SetupGet(item => item.Length).Returns(bytes.LongLength);
+        file.SetupGet(item => item.FileName).Returns(fileName);
+        file.Setup(item => item.OpenReadStream())
+            .Returns(() => new MemoryStream(bytes, writable: false));
+        return file.Object;
     }
 
     private sealed class UploadFixture
