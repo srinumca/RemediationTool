@@ -22,7 +22,7 @@ public sealed class DynamoDbTableInitialiserTests
                 "IngestionJobId-LoadDateUtc-index",
                 "SourceRecordId-LoadDateUtc-index"
             },
-            ttlExpected: false),
+            TtlExpected: false),
         new TableCreationCase(
             "history-table",
             new[]
@@ -35,22 +35,22 @@ public sealed class DynamoDbTableInitialiserTests
                 "FindingId-ChangedAtUtc-index",
                 "IngestionJobId-ChangedAtUtc-index"
             },
-            ttlExpected: false),
+            TtlExpected: false),
         new TableCreationCase(
             "reports-table",
             new[] { ("JobId", KeyType.HASH) },
             new[] { "Status-StartTimestampUtc-index" },
-            ttlExpected: false),
+            TtlExpected: false),
         new TableCreationCase(
             "rejected-table",
             new[] { ("RejectedRowId", KeyType.HASH) },
             new[] { "JobId-ErrorDateUtc-index" },
-            ttlExpected: false),
+            TtlExpected: false),
         new TableCreationCase(
             "checkpoints-table",
             new[] { ("JobId", KeyType.HASH) },
             Array.Empty<string>(),
-            ttlExpected: false),
+            TtlExpected: false),
         new TableCreationCase(
             "staging-table",
             new[]
@@ -59,7 +59,7 @@ public sealed class DynamoDbTableInitialiserTests
                 ("SequenceNumber", KeyType.RANGE)
             },
             Array.Empty<string>(),
-            ttlExpected: true)
+            TtlExpected: true)
     };
 
     [Fact]
