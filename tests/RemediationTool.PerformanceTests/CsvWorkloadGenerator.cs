@@ -50,7 +50,8 @@ internal static class CsvWorkloadGenerator
             string.Join(',', Header).AsMemory(),
             cancellationToken);
 
-        var lastModifiedDate = DateTime.UtcNow.AddYears(-12).ToString("O", CultureInfo.InvariantCulture);
+        var lastModifiedDate = DateTime.UtcNow.AddYears(-12)
+            .ToString("O", CultureInfo.InvariantCulture);
 
         for (var index = 1; index <= recordCount; index++)
         {
@@ -88,10 +89,10 @@ internal static class CsvWorkloadGenerator
 
     private static string Escape(string value)
     {
-        if (!value.Contains(',', StringComparison.Ordinal)
-            && !value.Contains('"', StringComparison.Ordinal)
-            && !value.Contains('\n', StringComparison.Ordinal)
-            && !value.Contains('\r', StringComparison.Ordinal))
+        if (!value.Contains(',')
+            && !value.Contains('"')
+            && !value.Contains('\n')
+            && !value.Contains('\r'))
         {
             return value;
         }
