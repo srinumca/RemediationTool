@@ -32,9 +32,14 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     var authenticationEnabled = builder.Configuration.GetValue<bool>("Authentication:Enabled");
+    var swaggerEnabled = builder.Environment.IsDevelopment()
+        || builder.Configuration.GetValue<bool>("Swagger:Enabled");
     var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
     var swaggerClientId = builder.Configuration["SwaggerAzureAd:ClientId"] ?? string.Empty;
     var swaggerScope = builder.Configuration["SwaggerAzureAd:Scope"] ?? string.Empty;
+    var swaggerAuthenticationEnabled = authenticationEnabled
+        && !string.IsNullOrWhiteSpace(swaggerClientId)
+        && !string.IsNullOrWhiteSpace(swaggerScope);
 
     if (authenticationEnabled)
     {
@@ -42,8 +47,7 @@ try
         {
             (Key: "AzureAd:TenantId", Value: azureAdTenantId),
             (Key: "AzureAd:ClientId", Value: builder.Configuration["AzureAd:ClientId"]),
-            (Key: "SwaggerAzureAd:ClientId", Value: swaggerClientId),
-            (Key: "SwaggerAzureAd:Scope", Value: swaggerScope)
+            (Key: "AzureAd:Audience", Value: builder.Configuration["AzureAd:Audience"])
         }
         .Where(setting => string.IsNullOrWhiteSpace(setting.Value))
         .Select(setting => setting.Key)
@@ -117,7 +121,7 @@ try
     {
         c.SwaggerDoc("v1", new() { Title = "GFR Remediation Tool API", Version = "v1" });
 
-        if (authenticationEnabled)
+        if (swaggerAuthenticationEnabled)
         {
             c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
             {
@@ -215,8 +219,6 @@ try
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     var app = builder.Build();
-    var swaggerEnabled = app.Environment.IsDevelopment()
-        || builder.Configuration.GetValue<bool>("Swagger:Enabled");
 
     // ─── DynamoDB table initialisation ───────────────────────────────────────
     if (persistenceProvider.Equals("DynamoDB", StringComparison.OrdinalIgnoreCase))
@@ -238,7 +240,7 @@ try
         app.UseSwagger();
         app.UseSwaggerUI(options =>
         {
-            if (authenticationEnabled)
+            if (swaggerAuthenticationEnabled)
             {
                 options.OAuthClientId(swaggerClientId);
                 options.OAuthUsePkce();
@@ -257,9 +259,10 @@ try
     app.MapControllers();
 
     Log.Information(
-        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}; Swagger enabled: {SwaggerEnabled}",
+        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}; Swagger enabled: {SwaggerEnabled}; Swagger OAuth enabled: {SwaggerAuthenticationEnabled}",
         authenticationEnabled,
-        swaggerEnabled);
+        swaggerEnabled,
+        swaggerAuthenticationEnabled);
 
     app.Run();
 }
