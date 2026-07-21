@@ -8,9 +8,7 @@ public static class AuthorizationServiceCollectionExtensions
     public static IServiceCollection AddRemediationAuthorizationPolicies(
         this IServiceCollection services,
         IConfiguration configuration,
-        bool authenticationEnabled,
-        string delegatedScope,
-        string applicationRole)
+        bool authenticationEnabled)
     {
         var systemAdminRole = configuration["Authorization:Roles:SystemAdmin"]
             ?? RemediationRoleDefaults.SystemAdmin;
@@ -27,10 +25,9 @@ public static class AuthorizationServiceCollectionExtensions
                 return;
             }
 
-            AddDelegatedRolePolicy(
+            AddRolePolicy(
                 options,
                 AuthorizationPolicies.AdminAccess,
-                delegatedScope,
                 systemAdminRole,
                 adminRole);
 
@@ -38,18 +35,15 @@ public static class AuthorizationServiceCollectionExtensions
                 AuthorizationPolicies.InternalApplication,
                 policy => policy
                     .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
-                    .RequireAuthenticatedUser()
-                    .RequireAssertion(context =>
-                        AuthorizationClaimChecks.HasRole(context.User, applicationRole)));
+                    .RequireAuthenticatedUser());
         });
 
         return services;
     }
 
-    private static void AddDelegatedRolePolicy(
+    private static void AddRolePolicy(
         AuthorizationOptions options,
         string policyName,
-        string delegatedScope,
         params string[] allowedRoles)
     {
         options.AddPolicy(
@@ -58,8 +52,7 @@ public static class AuthorizationServiceCollectionExtensions
                 .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
                 .RequireAssertion(context =>
-                    AuthorizationClaimChecks.HasScope(context.User, delegatedScope)
-                    && AuthorizationClaimChecks.HasAnyRole(context.User, allowedRoles)));
+                    AuthorizationClaimChecks.HasAnyRole(context.User, allowedRoles)));
     }
 
     private static void AddDisabledPolicy(
