@@ -232,5 +232,8 @@ public sealed class DynamoDbTableInitialiserTests
         string TableName,
         IReadOnlyList<(string AttributeName, KeyType KeyType)> Keys,
         IReadOnlyList<string> IndexNames,
-        bool TtlExpected);
+        bool TtlExpected)
+    {
+        public override string ToString() => TableName;
+    }
 }
