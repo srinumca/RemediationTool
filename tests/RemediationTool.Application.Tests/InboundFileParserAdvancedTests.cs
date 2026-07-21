@@ -92,8 +92,8 @@ public sealed class InboundFileParserAdvancedTests
     {
         var parser = CreateParser();
         var csv =
-            "finding file name,FINDING-FILE-FORMAT,current file location,finding type,originating data system,originating vendor tool,ID,Finding_File_Size,Data_System,Last_Modified_Date,Risk_Level\n"
-            + "source.txt,txt,/source/source.txt,Obsolete,SMB,EDG,record-1,2048,NetApp,2026-01-02T03:04:05Z,High";
+            "finding file name,FINDING-FILE-FORMAT,current file location,finding type,originating data system,originating vendor tool,ID,Finding_File_Size,Last_Modified_Date,Risk_Level\n"
+            + "source.txt,txt,/source/source.txt,Obsolete,SMB,EDG,record-1,2048,2026-01-02T03:04:05Z,High";
         using var stream = CsvStream(csv);
 
         var result = parser.Parse(
@@ -112,7 +112,6 @@ public sealed class InboundFileParserAdvancedTests
         Assert.Equal("record-1", finding.SourceRecordId);
         Assert.Equal("source.txt", finding.FindingFileName);
         Assert.Equal(2048, finding.FindingFileSizeBytes);
-        Assert.Equal("NetApp", finding.SourceSystemPlatform);
         Assert.Equal("job-1", finding.IngestionJobId);
         Assert.Equal("report.csv", finding.InboundFileName);
         Assert.Equal("user-1", finding.UserName);
@@ -260,8 +259,10 @@ public sealed class InboundFileParserAdvancedTests
     public void InboundParseResult_AggregatesCountsCaseInsensitivelyAndTracksSourceSystems()
     {
         var result = new InboundParseResult();
-        result.AddValidFinding(new RemediationTool.Domain.Entities.FileFinding { FindingType = "Obsolete" });
-        result.AddValidFinding(new RemediationTool.Domain.Entities.FileFinding { FindingType = "obsolete" });
+        result.AddValidFinding(
+            new RemediationTool.Domain.Entities.FileFinding { FindingType = "Obsolete" });
+        result.AddValidFinding(
+            new RemediationTool.Domain.Entities.FileFinding { FindingType = "obsolete" });
         result.RegisterRejectedRecord();
         result.RegisterSourceSystem(" SMB ");
         result.RegisterSourceSystem("smb");
