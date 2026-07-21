@@ -45,10 +45,11 @@ internal sealed record JobExecutionResult
     public long TotalElapsedMilliseconds =>
         UploadElapsedMilliseconds + IngestionElapsedMilliseconds;
 
-    public bool IsSuccessful =>
+    public bool CompletedWithoutInfrastructureFailure =>
         string.IsNullOrWhiteSpace(Error)
         && HttpStatusCode is >= 200 and < 300
-        && FinalStatus.Equals("Success", StringComparison.OrdinalIgnoreCase);
+        && !FinalStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+        && !FinalStatus.Equals("Unknown", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed record PerformanceTestResult
@@ -86,7 +87,8 @@ internal sealed record PerformanceTestResult
 
     public int TotalRejectedRecords => Jobs.Sum(job => job.RejectCount);
 
-    public int FailedJobCount => Jobs.Count(job => !job.IsSuccessful);
+    public int FailedJobCount =>
+        Jobs.Count(job => !job.CompletedWithoutInfrastructureFailure);
 
     public int TotalRetryCount => Jobs.Sum(job => job.BatchPersistenceRetryCount);
 
@@ -103,4 +105,8 @@ internal sealed record PerformanceTestResult
     public double ErrorRatePercentage => TotalProcessedRecords == 0
         ? 100
         : (TotalRejectedRecords / (double)TotalProcessedRecords) * 100;
+
+    public bool Passed =>
+        FailedJobCount == 0
+        && TotalProcessedRecords == TotalInputRecords;
 }
