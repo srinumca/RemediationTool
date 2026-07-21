@@ -113,7 +113,7 @@ Run before merging or deploying:
 ```text
 dotnet restore
 dotnet build RemediationTool.sln
-dotnet test RemediationTool.sln
+dotnet test RemediationTool.sln --settings coverage.runsettings --collect:"XPlat Code Coverage"
 ```
 
 Then verify:
@@ -127,3 +127,17 @@ Then verify:
 - Batch retry, checkpoint writes, summaries and audit logs remain operational.
 - Missing or invalid tokens return `401` when authentication is enabled.
 - Authenticated callers without the required upload role receive `403` for `POST /api/upload`.
+
+## Performance testing
+
+The standalone performance runner exercises the real upload and ingestion APIs, captures measured results, and generates JSON, Markdown, and HTML reports.
+
+```text
+dotnet run --project tests/RemediationTool.PerformanceTests -- \
+  --base-url https://remediation-api.example \
+  --records 10000 \
+  --concurrency 1 \
+  --output artifacts/performance/baseline
+```
+
+Use the manually triggered **Quality and Performance** GitHub Actions workflow to generate downloadable report artifacts, including PDF conversion when the runner supports it. See `docs/performance-testing.md` for environment safety, workload progression, pass criteria, and report interpretation.
