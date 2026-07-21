@@ -79,13 +79,13 @@ internal sealed record PerformanceTestResult
     public long WallTimeMilliseconds =>
         Math.Max(0, (long)(CompletedAtUtc - StartedAtUtc).TotalMilliseconds);
 
-    public int TotalInputRecords => RecordsPerJob * Jobs.Count;
+    public long TotalInputRecords => (long)RecordsPerJob * Jobs.Count;
 
-    public int TotalProcessedRecords => Jobs.Sum(job => job.TotalRecords);
+    public long TotalProcessedRecords => Jobs.Sum(job => (long)job.TotalRecords);
 
-    public int TotalSucceededRecords => Jobs.Sum(job => job.SuccessCount);
+    public long TotalSucceededRecords => Jobs.Sum(job => (long)job.SuccessCount);
 
-    public int TotalRejectedRecords => Jobs.Sum(job => job.RejectCount);
+    public long TotalRejectedRecords => Jobs.Sum(job => (long)job.RejectCount);
 
     public int FailedJobCount =>
         Jobs.Count(job => !job.CompletedWithoutInfrastructureFailure);
