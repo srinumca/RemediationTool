@@ -35,11 +35,6 @@ try
     var swaggerEnabled = builder.Environment.IsDevelopment()
         || builder.Configuration.GetValue<bool>("Swagger:Enabled");
     var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
-    var swaggerClientId = builder.Configuration["SwaggerAzureAd:ClientId"] ?? string.Empty;
-    var swaggerScope = builder.Configuration["SwaggerAzureAd:Scope"] ?? string.Empty;
-    var swaggerAuthenticationEnabled = authenticationEnabled
-        && !string.IsNullOrWhiteSpace(swaggerClientId)
-        && !string.IsNullOrWhiteSpace(swaggerScope);
 
     if (authenticationEnabled)
     {
@@ -121,26 +116,16 @@ try
     {
         c.SwaggerDoc("v1", new() { Title = "GFR Remediation Tool API", Version = "v1" });
 
-        if (swaggerAuthenticationEnabled)
+        if (authenticationEnabled)
         {
-            c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
+            c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
-                Type = SecuritySchemeType.OAuth2,
-                Description = "Microsoft Entra ID authorization code flow with PKCE.",
-                Flows = new OpenApiOAuthFlows
-                {
-                    AuthorizationCode = new OpenApiOAuthFlow
-                    {
-                        AuthorizationUrl = new Uri(
-                            $"https://login.microsoftonline.com/{azureAdTenantId}/oauth2/v2.0/authorize"),
-                        TokenUrl = new Uri(
-                            $"https://login.microsoftonline.com/{azureAdTenantId}/oauth2/v2.0/token"),
-                        Scopes = new Dictionary<string, string>
-                        {
-                            [swaggerScope] = "Access the GFR Remediation Tool API"
-                        }
-                    }
-                }
+                Name = "Authorization",
+                Type = SecuritySchemeType.Http,
+                Scheme = "bearer",
+                BearerFormat = "JWT",
+                In = ParameterLocation.Header,
+                Description = "Enter a Microsoft Entra access token. Swagger adds the Bearer prefix automatically."
             });
 
             c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -151,10 +136,10 @@ try
                         Reference = new OpenApiReference
                         {
                             Type = ReferenceType.SecurityScheme,
-                            Id = "oauth2"
+                            Id = "Bearer"
                         }
                     },
-                    new[] { swaggerScope }
+                    Array.Empty<string>()
                 }
             });
         }
@@ -238,16 +223,7 @@ try
     if (swaggerEnabled)
     {
         app.UseSwagger();
-        app.UseSwaggerUI(options =>
-        {
-            if (swaggerAuthenticationEnabled)
-            {
-                options.OAuthClientId(swaggerClientId);
-                options.OAuthUsePkce();
-                options.OAuthScopes(swaggerScope);
-                options.OAuthAppName("GFR Remediation Tool Swagger");
-            }
-        });
+        app.UseSwaggerUI();
     }
 
     if (authenticationEnabled)
@@ -259,10 +235,9 @@ try
     app.MapControllers();
 
     Log.Information(
-        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}; Swagger enabled: {SwaggerEnabled}; Swagger OAuth enabled: {SwaggerAuthenticationEnabled}",
+        "GFR Remediation Tool started successfully. Microsoft Entra authentication enabled: {AuthenticationEnabled}; Swagger enabled: {SwaggerEnabled}",
         authenticationEnabled,
-        swaggerEnabled,
-        swaggerAuthenticationEnabled);
+        swaggerEnabled);
 
     app.Run();
 }
