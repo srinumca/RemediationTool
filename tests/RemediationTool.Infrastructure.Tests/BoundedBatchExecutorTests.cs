@@ -76,10 +76,10 @@ public sealed class BoundedBatchExecutorTests
     }
 
     [Theory]
+    [InlineData(0, 25, 0)]
     [InlineData(1, 25, 1)]
     [InlineData(25, 25, 1)]
     [InlineData(26, 25, 2)]
-    [InlineData(70_000, 25, 2_800)]
     public async Task ExecuteAsync_CreatesExpectedBatchCount(
         int totalItemCount,
         int batchSize,
