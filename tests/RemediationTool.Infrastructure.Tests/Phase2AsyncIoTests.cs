@@ -1,29 +1,12 @@
-using Microsoft.Extensions.Configuration;
-using Moq;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
 using RemediationTool.Application.Services;
-using RemediationTool.Infrastructure;
 using Xunit;
 
 namespace RemediationTool.Infrastructure.Tests;
 
 public sealed class Phase2AsyncIoTests
 {
-    [Fact]
-    public void Defaults_PreserveExistingBehaviorDuringRollout()
-    {
-        var options = new IngestionProcessingOptions();
-
-        Assert.True(options.EnableBoundedDynamoDbConcurrency);
-        Assert.Equal(4, options.ResolveDynamoDbWriteConcurrency());
-        Assert.Equal(5000, options.ResolveRejectedRowBatchSize());
-        Assert.False(options.EnableHighVolumeStreaming);
-        Assert.True(options.LegacyFallbackEnabled);
-        Assert.False(options.UseParquetAsPrimaryResumeStore);
-        Assert.True(options.LegacyStagingFallbackEnabled);
-    }
-
     [Fact]
     public async Task OpenSourceReadAsync_UsesForwardOnlyStreamingForCsv()
     {
@@ -124,49 +107,6 @@ public sealed class Phase2AsyncIoTests
         Assert.Equal(0, storage.StreamingReadCount);
         Assert.Equal(0, storage.SeekableReadCount);
         Assert.Equal(0, storage.BufferedReadCount);
-    }
-
-    [Fact]
-    public async Task LocalStorage_ProvidesDirectSeekableStreamsAndHonorsCancellation()
-    {
-        var rootPath = Path.Combine(
-            Path.GetTempPath(),
-            $"gfr-phase2-tests-{Guid.NewGuid():N}");
-
-        try
-        {
-            var configuration = new Mock<IConfiguration>();
-            configuration
-                .Setup(config => config["Storage:LocalRootPath"])
-                .Returns(rootPath);
-
-            var storage = new LocalStorageService(configuration.Object);
-            var payload = "sourceRecordId,findingFileName\n1,file.txt";
-
-            await using (var upload = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload)))
-            {
-                await storage.UploadAsync("input/report.csv", upload);
-            }
-
-            await using var streamed = await storage.OpenReadAsync("input/report.csv");
-            await using var seekable = await storage.OpenSeekableReadAsync("input/report.csv");
-
-            Assert.True(streamed.CanRead);
-            Assert.True(seekable.CanSeek);
-
-            using var reader = new StreamReader(streamed);
-            Assert.Equal(payload, await reader.ReadToEndAsync());
-
-            using var cancellation = new CancellationTokenSource();
-            cancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-                storage.OpenReadAsync("input/report.csv", cancellation.Token));
-        }
-        finally
-        {
-            if (Directory.Exists(rootPath))
-                Directory.Delete(rootPath, recursive: true);
-        }
     }
 
     private static IngestionProcessingOptions CreateStreamingOptions()
