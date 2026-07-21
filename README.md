@@ -113,7 +113,7 @@ Run before merging or deploying:
 ```text
 dotnet restore
 dotnet build RemediationTool.sln
-dotnet test RemediationTool.sln --settings coverage.runsettings --collect:"XPlat Code Coverage"
+dotnet test RemediationTool.sln
 ```
 
 Then verify:
