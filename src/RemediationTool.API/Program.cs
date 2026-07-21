@@ -33,8 +33,6 @@ try
 
     var authenticationEnabled = builder.Configuration.GetValue<bool>("Authentication:Enabled");
     var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
-    var delegatedScope = builder.Configuration["AzureAd:Scopes"] ?? string.Empty;
-    var applicationRole = builder.Configuration["AzureAd:ApplicationRole"] ?? string.Empty;
     var swaggerClientId = builder.Configuration["SwaggerAzureAd:ClientId"] ?? string.Empty;
     var swaggerScope = builder.Configuration["SwaggerAzureAd:Scope"] ?? string.Empty;
 
@@ -44,8 +42,6 @@ try
         {
             (Key: "AzureAd:TenantId", Value: azureAdTenantId),
             (Key: "AzureAd:ClientId", Value: builder.Configuration["AzureAd:ClientId"]),
-            (Key: "AzureAd:Scopes", Value: delegatedScope),
-            (Key: "AzureAd:ApplicationRole", Value: applicationRole),
             (Key: "SwaggerAzureAd:ClientId", Value: swaggerClientId),
             (Key: "SwaggerAzureAd:Scope", Value: swaggerScope)
         }
@@ -100,20 +96,13 @@ try
             options.FallbackPolicy = new AuthorizationPolicyBuilder(
                     JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
-                .RequireAssertion(context =>
-                {
-                    return AuthorizationClaimChecks.HasScope(context.User, delegatedScope)
-                        || AuthorizationClaimChecks.HasRole(context.User, applicationRole);
-                })
                 .Build();
         }
     });
 
     builder.Services.AddRemediationAuthorizationPolicies(
         builder.Configuration,
-        authenticationEnabled,
-        delegatedScope,
-        applicationRole);
+        authenticationEnabled);
 
     // ─── Controllers ─────────────────────────────────────────────────────────
     builder.Services.AddControllers()
