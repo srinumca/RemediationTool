@@ -1,5 +1,6 @@
 using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
+using RemediationTool.Domain.Enum;
 using Xunit;
 
 namespace RemediationTool.Application.Tests;
@@ -194,12 +195,12 @@ public sealed class DomainBehaviorTests
     }
 
     [Theory]
-    [InlineData(FileStatus.Started, 10, 0, false, false)]
-    [InlineData(FileStatus.Failed, 10, 10, false, false)]
-    [InlineData(FileStatus.Failed, 10, 5, false, true)]
-    [InlineData(FileStatus.Failed, 0, 0, true, true)]
+    [InlineData(IngestionJobStatus.Started, 10, 0, false, false)]
+    [InlineData(IngestionJobStatus.Failed, 10, 10, false, false)]
+    [InlineData(IngestionJobStatus.Failed, 10, 5, false, true)]
+    [InlineData(IngestionJobStatus.Failed, 0, 0, true, true)]
     public void IngestionCheckpoint_ResumeEligibility_UsesStatusProgressAndExplicitOverride(
-        FileStatusAdapter statusAdapter,
+        IngestionJobStatus status,
         int successCount,
         int processedCount,
         bool explicitValue,
@@ -207,7 +208,7 @@ public sealed class DomainBehaviorTests
     {
         var checkpoint = new IngestionCheckpoint
         {
-            Status = statusAdapter.ToIngestionStatus(),
+            Status = status,
             SuccessCount = successCount,
             LastProcessedRecordCount = processedCount,
             IsResumeEligible = explicitValue
@@ -215,19 +216,4 @@ public sealed class DomainBehaviorTests
 
         Assert.Equal(expected, checkpoint.IsResumeEligible);
     }
-
-    public enum FileStatusAdapter
-    {
-        Started,
-        Failed
-    }
-}
-
-internal static class FileStatusAdapterExtensions
-{
-    public static RemediationTool.Domain.Enum.IngestionJobStatus ToIngestionStatus(
-        this DomainBehaviorTests.FileStatusAdapter value)
-        => value == DomainBehaviorTests.FileStatusAdapter.Failed
-            ? RemediationTool.Domain.Enum.IngestionJobStatus.Failed
-            : RemediationTool.Domain.Enum.IngestionJobStatus.Started;
 }
