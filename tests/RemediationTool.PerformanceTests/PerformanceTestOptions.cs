@@ -10,6 +10,8 @@ internal sealed record PerformanceTestOptions(
     TimeSpan RequestTimeout,
     string ScenarioName)
 {
+    private const int MaximumConcurrency = 50;
+
     public static bool TryParse(
         string[] args,
         out PerformanceTestOptions? options,
@@ -19,10 +21,11 @@ internal sealed record PerformanceTestOptions(
         var baseUrl = ReadValue(values, "base-url", "REMEDIATION_BASE_URL");
 
         if (string.IsNullOrWhiteSpace(baseUrl)
-            || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
+            || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
+            || baseUri.Scheme is not ("http" or "https"))
         {
             options = null;
-            error = "A valid --base-url value is required.";
+            error = "A valid HTTP or HTTPS --base-url value is required.";
             return false;
         }
 
@@ -33,10 +36,11 @@ internal sealed record PerformanceTestOptions(
             return false;
         }
 
-        if (!TryReadPositiveInt(values, "concurrency", "REMEDIATION_CONCURRENCY", 1, out var concurrency))
+        if (!TryReadPositiveInt(values, "concurrency", "REMEDIATION_CONCURRENCY", 1, out var concurrency)
+            || concurrency > MaximumConcurrency)
         {
             options = null;
-            error = "--concurrency must be a positive integer.";
+            error = $"--concurrency must be between 1 and {MaximumConcurrency}.";
             return false;
         }
 
@@ -64,11 +68,14 @@ internal sealed record PerformanceTestOptions(
         var token = ReadValue(values, "token", "REMEDIATION_BEARER_TOKEN");
         var scenarioName = ReadValue(values, "scenario", "REMEDIATION_SCENARIO")
             ?? "ingestion-baseline";
+        var normalizedBaseUri = new Uri(
+            $"{baseUri.AbsoluteUri.TrimEnd('/')}/",
+            UriKind.Absolute);
 
         options = new PerformanceTestOptions(
-            baseUri,
+            normalizedBaseUri,
             records,
-            Math.Clamp(concurrency, 1, 50),
+            concurrency,
             invalidPercent,
             outputDirectory,
             token,
