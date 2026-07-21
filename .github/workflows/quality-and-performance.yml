@@ -133,7 +133,6 @@ jobs:
       REMEDIATION_SCENARIO: ${{ inputs.scenario }}
       REMEDIATION_BEARER_TOKEN: ${{ secrets.REMEDIATION_BEARER_TOKEN }}
       REMEDIATION_OUTPUT: artifacts/performance
-      REMEDIATION_ENVIRONMENT: ${{ inputs.base_url }}
 
     steps:
       - name: Checkout
@@ -144,8 +143,10 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore
-        run: dotnet restore RemediationTool.sln
+      - name: Restore performance runner
+        run: >-
+          dotnet restore
+          tests/RemediationTool.PerformanceTests/RemediationTool.PerformanceTests.csproj
 
       - name: Build performance runner
         run: >-
@@ -154,7 +155,7 @@ jobs:
           --configuration Release
           --no-restore
 
-      - name: Execute performance test
+      - name: Execute performance scenario
         run: >-
           dotnet run
           --project tests/RemediationTool.PerformanceTests/RemediationTool.PerformanceTests.csproj
