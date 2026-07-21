@@ -258,7 +258,7 @@ public sealed class IngestionServiceTests
             MinBatchSize = 1,
             MaxBatchSize = 1000,
             EnableBatchCheckpointing = true,
-            MaxBatchPersistenceRetryCount = 0,
+            MaxBatchPersistenceRetryCount = 1,
             BatchPersistenceRetryDelayMilliseconds = 0,
             EnableHighVolumeStreaming = false,
             LegacyFallbackEnabled = true,
