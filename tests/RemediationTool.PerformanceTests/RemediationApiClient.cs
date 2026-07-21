@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -99,7 +100,7 @@ internal sealed class RemediationApiClient : IDisposable
             using var ingestionResponse = await _httpClient.PostAsync(
                 $"api/ingestion/{Uri.EscapeDataString(reportUid)}",
                 content: null,
-                cancellationToken);
+                cancellationToken: cancellationToken);
             ingestionStopwatch.Stop();
             ingestionElapsedMilliseconds = ingestionStopwatch.ElapsedMilliseconds;
             finalStatusCode = (int)ingestionResponse.StatusCode;
@@ -243,7 +244,7 @@ internal sealed class RemediationApiClient : IDisposable
                 3 => "PartialSuccess",
                 4 => "Failed",
                 5 => "Completed",
-                _ => number.ToString()
+                _ => number.ToString(CultureInfo.InvariantCulture)
             },
             _ => value.ToString()
         };
@@ -274,17 +275,36 @@ internal sealed class RemediationApiClient : IDisposable
 
     private static int ReadInt(JsonElement root, string propertyName)
     {
-        return TryGetProperty(root, propertyName, out var value)
-            && value.TryGetInt32(out var result)
-                ? result
-                : 0;
+        if (!TryGetProperty(root, propertyName, out var value))
+            return 0;
+
+        if (value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt32(out var numberValue))
+        {
+            return numberValue;
+        }
+
+        return value.ValueKind == JsonValueKind.String
+            && int.TryParse(
+                value.GetString(),
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var stringValue)
+                    ? stringValue
+                    : 0;
     }
 
     private static bool ReadBool(JsonElement root, string propertyName)
     {
-        return TryGetProperty(root, propertyName, out var value)
-            && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-            && value.GetBoolean();
+        if (!TryGetProperty(root, propertyName, out var value))
+            return false;
+
+        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            return value.GetBoolean();
+
+        return value.ValueKind == JsonValueKind.String
+            && bool.TryParse(value.GetString(), out var result)
+            && result;
     }
 
     private static bool TryGetProperty(
@@ -292,6 +312,12 @@ internal sealed class RemediationApiClient : IDisposable
         string propertyName,
         out JsonElement value)
     {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            value = default;
+            return false;
+        }
+
         foreach (var property in root.EnumerateObject())
         {
             if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
