@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastruct
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API", "src/RemediationTool.API/RemediationTool.API.csproj", "{631174F7-96A0-414B-B72B-EEEAE011190B}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46D12}") = "Tests", "Tests", "{7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastructure.Tests", "tests/RemediationTool.Infrastructure.Tests/RemediationTool.Infrastructure.Tests.csproj", "{A1F83B6B-6E16-4A6F-907F-13243B5195E2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API.Tests", "tests/RemediationTool.API.Tests/RemediationTool.API.Tests.csproj", "{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}"
@@ -50,5 +52,10 @@ Global
 		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A1F83B6B-6E16-4A6F-907F-13243B5195E2} = {7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}
+		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D} = {7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}
+		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54} = {7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}
 	EndGlobalSection
 EndGlobal
