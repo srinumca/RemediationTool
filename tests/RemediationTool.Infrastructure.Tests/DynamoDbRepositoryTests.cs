@@ -31,8 +31,10 @@ public sealed class DynamoDbRepositoryTests
         GetItemRequest? captured = null;
         var audit = CreateAudit("job-1");
         client
-            .Setup(db => db.GetItemAsync(It.IsAny<GetItemRequest>()))
-            .Callback<GetItemRequest>(request => captured = request)
+            .Setup(db => db.GetItemAsync(
+                It.IsAny<GetItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<GetItemRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(new GetItemResponse
             {
                 Item = DynamoDbAttributeMap.ToMap(audit)
@@ -52,7 +54,9 @@ public sealed class DynamoDbRepositoryTests
     {
         var client = new Mock<IAmazonDynamoDB>();
         client
-            .Setup(db => db.GetItemAsync(It.IsAny<GetItemRequest>()))
+            .Setup(db => db.GetItemAsync(
+                It.IsAny<GetItemRequest>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GetItemResponse
             {
                 Item = new Dictionary<string, AttributeValue>()
@@ -68,8 +72,10 @@ public sealed class DynamoDbRepositoryTests
         var client = new Mock<IAmazonDynamoDB>();
         var requests = new List<PutItemRequest>();
         client
-            .Setup(db => db.PutItemAsync(It.IsAny<PutItemRequest>()))
-            .Callback<PutItemRequest>(request => requests.Add(request))
+            .Setup(db => db.PutItemAsync(
+                It.IsAny<PutItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<PutItemRequest, CancellationToken>((request, _) => requests.Add(request))
             .ReturnsAsync(new PutItemResponse());
         var repository = CreateJobAuditRepository(client);
         var audit = CreateAudit("job-2");
@@ -91,7 +97,9 @@ public sealed class DynamoDbRepositoryTests
     {
         var client = new Mock<IAmazonDynamoDB>();
         client
-            .Setup(db => db.GetItemAsync(It.IsAny<GetItemRequest>()))
+            .Setup(db => db.GetItemAsync(
+                It.IsAny<GetItemRequest>(),
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new AmazonDynamoDBException("DynamoDB unavailable"));
         var repository = CreateJobAuditRepository(client);
 
@@ -107,8 +115,10 @@ public sealed class DynamoDbRepositoryTests
         var client = new Mock<IAmazonDynamoDB>();
         PutItemRequest? captured = null;
         client
-            .Setup(db => db.PutItemAsync(It.IsAny<PutItemRequest>()))
-            .Callback<PutItemRequest>(request => captured = request)
+            .Setup(db => db.PutItemAsync(
+                It.IsAny<PutItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<PutItemRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(new PutItemResponse());
         var repository = new DynamoDbIngestionCheckpointRepository(
             client.Object,
@@ -127,7 +137,7 @@ public sealed class DynamoDbRepositoryTests
         Assert.InRange(checkpoint.LastCheckpointUtc, before, DateTime.UtcNow);
         Assert.Equal("checkpoints-table", captured?.TableName);
         Assert.Equal("job-3", captured?.Item["jobId"].S);
-        Assert.True(captured?.Item["isResumeEligible"].BOOL);
+        Assert.True(captured?.Item["isResumeEligible"].BOOL == true);
         Assert.Throws<ArgumentNullException>(() => repository.Upsert(null!));
     }
 
@@ -149,8 +159,10 @@ public sealed class DynamoDbRepositoryTests
         var client = new Mock<IAmazonDynamoDB>();
         var requests = new ConcurrentBag<BatchWriteItemRequest>();
         client
-            .Setup(db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()))
-            .Callback<BatchWriteItemRequest>(request => requests.Add(request))
+            .Setup(db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<BatchWriteItemRequest, CancellationToken>((request, _) => requests.Add(request))
             .ReturnsAsync(SuccessBatchResponse());
         var repository = CreateFindingRepository(client, concurrency: 4);
         var findings = Enumerable.Range(1, 26)
@@ -179,8 +191,10 @@ public sealed class DynamoDbRepositoryTests
         var active = 0;
         var maximum = 0;
         client
-            .Setup(db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()))
-            .Returns(async () =>
+            .Setup(db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (BatchWriteItemRequest _, CancellationToken _) =>
             {
                 var current = Interlocked.Increment(ref active);
                 UpdateMaximum(ref maximum, current);
@@ -203,7 +217,9 @@ public sealed class DynamoDbRepositoryTests
 
         Assert.InRange(maximum, 1, 2);
         client.Verify(
-            db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()),
+            db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()),
             Times.Exactly(4));
     }
 
@@ -212,23 +228,30 @@ public sealed class DynamoDbRepositoryTests
     {
         var client = new Mock<IAmazonDynamoDB>();
         var calls = new List<BatchWriteItemRequest>();
+        var invocation = 0;
         client
-            .SetupSequence(db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()))
-            .Returns((BatchWriteItemRequest request) =>
+            .Setup(db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((BatchWriteItemRequest request, CancellationToken _) =>
             {
                 calls.Add(request);
-                var unprocessed = request.RequestItems["findings-table"].Take(1).ToList();
-                return Task.FromResult(new BatchWriteItemResponse
+                invocation++;
+
+                if (invocation == 1)
                 {
-                    UnprocessedItems = new Dictionary<string, List<WriteRequest>>
+                    var unprocessed = request.RequestItems["findings-table"]
+                        .Take(1)
+                        .ToList();
+                    return Task.FromResult(new BatchWriteItemResponse
                     {
-                        ["findings-table"] = unprocessed
-                    }
-                });
-            })
-            .Returns((BatchWriteItemRequest request) =>
-            {
-                calls.Add(request);
+                        UnprocessedItems = new Dictionary<string, List<WriteRequest>>
+                        {
+                            ["findings-table"] = unprocessed
+                        }
+                    });
+                }
+
                 return Task.FromResult(SuccessBatchResponse());
             });
         var repository = CreateFindingRepository(client, concurrency: 1);
@@ -249,7 +272,9 @@ public sealed class DynamoDbRepositoryTests
     {
         var client = new Mock<IAmazonDynamoDB>();
         client
-            .Setup(db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()))
+            .Setup(db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new AmazonDynamoDBException("throttled"));
         var repository = CreateFindingRepository(client, concurrency: 1);
 
@@ -267,8 +292,10 @@ public sealed class DynamoDbRepositoryTests
         var calls = new List<BatchWriteItemRequest>();
         var invocation = 0;
         client
-            .Setup(db => db.BatchWriteItemAsync(It.IsAny<BatchWriteItemRequest>()))
-            .Returns((BatchWriteItemRequest request) =>
+            .Setup(db => db.BatchWriteItemAsync(
+                It.IsAny<BatchWriteItemRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((BatchWriteItemRequest request, CancellationToken _) =>
             {
                 calls.Add(request);
                 invocation++;
@@ -278,7 +305,9 @@ public sealed class DynamoDbRepositoryTests
                     {
                         UnprocessedItems = new Dictionary<string, List<WriteRequest>>
                         {
-                            ["rejected-table"] = request.RequestItems["rejected-table"].Take(1).ToList()
+                            ["rejected-table"] = request.RequestItems["rejected-table"]
+                                .Take(1)
+                                .ToList()
                         }
                     });
                 }
