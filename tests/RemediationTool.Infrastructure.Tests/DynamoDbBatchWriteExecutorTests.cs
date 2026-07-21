@@ -66,7 +66,7 @@ public sealed class DynamoDbBatchWriteExecutorTests
     }
 
     [Fact]
-    public async Task WriteAsync_ThrowsWhenUnprocessedItemsRemainAfterRetryLimit()
+    public async Task WriteAsync_ThrowsWhenUnprocessedItemsRemainAtAttemptLimit()
     {
         var requests = CreateRequests(1);
         var dynamoDb = new Mock<IAmazonDynamoDB>(MockBehavior.Strict);
@@ -91,7 +91,7 @@ public sealed class DynamoDbBatchWriteExecutorTests
                 operationName: "TestWrite",
                 batchNumber: 1,
                 totalInputCount: requests.Count,
-                maxUnprocessedItemRetryAttempts: 2,
+                maxUnprocessedItemRetryAttempts: 1,
                 Mock.Of<ILogger>(),
                 CancellationToken.None));
 
@@ -101,7 +101,7 @@ public sealed class DynamoDbBatchWriteExecutorTests
             client => client.BatchWriteItemAsync(
                 It.IsAny<BatchWriteItemRequest>(),
                 It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Once);
     }
 
     private static List<WriteRequest> CreateRequests(int count)
