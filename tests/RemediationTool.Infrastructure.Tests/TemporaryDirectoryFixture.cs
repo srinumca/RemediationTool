@@ -1,46 +1,22 @@
 using Microsoft.Extensions.Configuration;
-using Xunit;
 
 namespace RemediationTool.Infrastructure.Tests;
 
-public sealed class TemporaryDirectoryFixture : IAsyncLifetime
+public sealed class TemporaryDirectoryFixture : IDisposable
 {
-    public string RootPath { get; private set; } = string.Empty;
+    private const int DeleteAttemptCount = 3;
+    private const int DeleteRetryDelayMilliseconds = 25;
 
-    public Task InitializeAsync()
+    public TemporaryDirectoryFixture()
     {
         RootPath = Path.Combine(
             Path.GetTempPath(),
             "remediation-tests",
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(RootPath);
-        return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
-    {
-        if (!string.IsNullOrWhiteSpace(RootPath) && Directory.Exists(RootPath))
-        {
-            for (var attempt = 1; attempt <= 3; attempt++)
-            {
-                try
-                {
-                    Directory.Delete(RootPath, recursive: true);
-                    break;
-                }
-                catch (IOException) when (attempt < 3)
-                {
-                    Thread.Sleep(25);
-                }
-                catch (UnauthorizedAccessException) when (attempt < 3)
-                {
-                    Thread.Sleep(25);
-                }
-            }
-        }
-
-        return Task.CompletedTask;
-    }
+    public string RootPath { get; }
 
     public IConfiguration Configuration(params (string Key, string? Value)[] values)
     {
@@ -52,5 +28,28 @@ public sealed class TemporaryDirectoryFixture : IAsyncLifetime
         return new ConfigurationBuilder()
             .AddInMemoryCollection(settings)
             .Build();
+    }
+
+    public void Dispose()
+    {
+        if (!Directory.Exists(RootPath))
+            return;
+
+        for (var attempt = 1; attempt <= DeleteAttemptCount; attempt++)
+        {
+            try
+            {
+                Directory.Delete(RootPath, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < DeleteAttemptCount)
+            {
+                Thread.Sleep(DeleteRetryDelayMilliseconds);
+            }
+            catch (UnauthorizedAccessException) when (attempt < DeleteAttemptCount)
+            {
+                Thread.Sleep(DeleteRetryDelayMilliseconds);
+            }
+        }
     }
 }
