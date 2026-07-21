@@ -7,7 +7,7 @@ using Xunit;
 
 namespace RemediationTool.Infrastructure.Tests;
 
-[CollectionDefinition(CollectionName, DisableParallelization = true)]
+[CollectionDefinition("AppContext data repositories", DisableParallelization = true)]
 public sealed class SharedDataRepositoryCollection
 {
     public const string CollectionName = "AppContext data repositories";
