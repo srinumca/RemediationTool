@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
 using RemediationTool.Infrastructure.Repositories;
