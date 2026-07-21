@@ -62,7 +62,11 @@ jobs:
         run: dotnet restore RemediationTool.sln
 
       - name: Build
-        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+        shell: bash
+        run: |
+          mkdir -p artifacts/build
+          set -o pipefail
+          dotnet build RemediationTool.sln --configuration Release --no-restore 2>&1 | tee artifacts/build/build.log
 
       - name: Test with coverage
         run: >-
@@ -105,6 +109,7 @@ jobs:
         with:
           name: quality-results
           path: |
+            artifacts/build
             artifacts/test-results
             artifacts/coverage
           if-no-files-found: warn
