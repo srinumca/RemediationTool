@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Options;
@@ -190,10 +189,11 @@ public sealed class UploadServiceTests
                 Storage.Object,
                 JobAuditRepository.Object,
                 NullLogger<UploadService>.Instance,
-                Options.Create(new IngestionProcessingOptions
-                {
-                    MaxUploadFileSizeMb = maxUploadFileSizeMb
-                }));
+                Microsoft.Extensions.Options.Options.Create(
+                    new IngestionProcessingOptions
+                    {
+                        MaxUploadFileSizeMb = maxUploadFileSizeMb
+                    }));
         }
 
         public Mock<IStorageService> Storage { get; }
