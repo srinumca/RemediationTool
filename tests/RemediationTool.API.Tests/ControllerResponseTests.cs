@@ -86,18 +86,33 @@ public sealed class ControllerResponseTests
     }
 
     [Fact]
-    public async Task Ingest_AllRowsRejected_ReturnsUnprocessableEntity()
+    public async Task Ingest_AllRowsRejected_ReturnsOkWithFailedPayload()
     {
         var controller = CreateIngestionController(InvalidCsv());
+
+        var result = await controller.Ingest(TestJobId, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<IngestionUploadResponse>(ok.Value);
+        Assert.Equal(IngestionJobStatus.Failed, response.Status);
+        Assert.Equal(1, response.TotalRecords);
+        Assert.Equal(0, response.SuccessCount);
+        Assert.Equal(1, response.RejectCount);
+    }
+
+    [Fact]
+    public async Task Ingest_HeaderOnlyCsv_ReturnsUnprocessableEntity()
+    {
+        var controller = CreateIngestionController(CsvHeader);
 
         var result = await controller.Ingest(TestJobId, CancellationToken.None);
 
         var unprocessable = Assert.IsType<UnprocessableEntityObjectResult>(result);
         var response = Assert.IsType<IngestionUploadResponse>(unprocessable.Value);
         Assert.Equal(IngestionJobStatus.Failed, response.Status);
-        Assert.Equal(1, response.TotalRecords);
+        Assert.Equal(0, response.TotalRecords);
         Assert.Equal(0, response.SuccessCount);
-        Assert.Equal(1, response.RejectCount);
+        Assert.Equal(0, response.RejectCount);
     }
 
     private static UploadController CreateUploadController()
