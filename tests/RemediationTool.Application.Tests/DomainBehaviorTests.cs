@@ -28,23 +28,7 @@ public sealed class DomainBehaviorTests
 
     [Theory]
     [MemberData(nameof(InitialStatusCases))]
-    public void FindingType_InitialAssignment_SetsExpectedWorkflowAndStoredStatus(
-        string? findingType,
-        FileStatus expectedStatus,
-        string expectedStoredValue)
-    {
-        var finding = new FileFinding
-        {
-            FindingType = findingType!
-        };
-
-        Assert.Equal(expectedStatus, finding.Status);
-        Assert.Equal(expectedStoredValue, finding.StatusColumnValue);
-    }
-
-    [Theory]
-    [MemberData(nameof(InitialStatusCases))]
-    public void StaticStatusResolvers_NormalizeExpectedValues(
+    public void FindingType_ResolversAndInitialAssignment_ReturnExpectedValues(
         string? findingType,
         FileStatus expectedStatus,
         string expectedStoredValue)
@@ -55,6 +39,14 @@ public sealed class DomainBehaviorTests
         Assert.Equal(
             expectedStoredValue,
             FileFinding.ResolveInitialStatusColumnValueFromFindingType(findingType));
+
+        var finding = new FileFinding
+        {
+            FindingType = findingType!
+        };
+
+        Assert.Equal(expectedStatus, finding.Status);
+        Assert.Equal(expectedStoredValue, finding.StatusColumnValue);
     }
 
     [Theory]
