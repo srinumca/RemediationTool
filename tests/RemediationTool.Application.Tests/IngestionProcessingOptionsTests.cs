@@ -5,6 +5,20 @@ namespace RemediationTool.Application.Tests;
 
 public sealed class IngestionProcessingOptionsTests
 {
+    [Fact]
+    public void Defaults_PreserveExistingBehaviorDuringRollout()
+    {
+        var options = new IngestionProcessingOptions();
+
+        Assert.True(options.EnableBoundedDynamoDbConcurrency);
+        Assert.Equal(4, options.ResolveDynamoDbWriteConcurrency());
+        Assert.Equal(5000, options.ResolveRejectedRowBatchSize());
+        Assert.False(options.EnableHighVolumeStreaming);
+        Assert.True(options.LegacyFallbackEnabled);
+        Assert.False(options.UseParquetAsPrimaryResumeStore);
+        Assert.True(options.LegacyStagingFallbackEnabled);
+    }
+
     [Theory]
     [InlineData(-1, 4, 4)]
     [InlineData(0, 7, 7)]
