@@ -1,3 +1,4 @@
+using RemediationTool.Domain;
 using RemediationTool.Domain.Entities;
 using RemediationTool.Domain.Enum;
 using Xunit;
