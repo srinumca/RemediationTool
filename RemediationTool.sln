@@ -14,6 +14,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastruct
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API.Tests", "tests/RemediationTool.API.Tests/RemediationTool.API.Tests.csproj", "{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Application.Tests", "tests/RemediationTool.Application.Tests/RemediationTool.Application.Tests.csproj", "{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.PerformanceTests", "tests/RemediationTool.PerformanceTests/RemediationTool.PerformanceTests.csproj", "{D4C7CB62-12E4-4B87-B8DA-64F37D4F679B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,5 +48,13 @@ Global
 		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C7A2EAA4-8B09-4FE7-91E8-41E2B56E0C6D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6A5A3F8-41A2-4AA2-8F98-84FEC3C84D54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4C7CB62-12E4-4B87-B8DA-64F37D4F679B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4C7CB62-12E4-4B87-B8DA-64F37D4F679B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4C7CB62-12E4-4B87-B8DA-64F37D4F679B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4C7CB62-12E4-4B87-B8DA-64F37D4F679B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
