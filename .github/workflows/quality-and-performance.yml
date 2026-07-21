@@ -84,7 +84,10 @@ jobs:
 
       - name: Install coverage report generator
         if: always()
-        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+        run: >-
+          dotnet tool install --global
+          dotnet-reportgenerator-globaltool
+          --version 5.5.10
 
       - name: Generate coverage report
         if: always()
