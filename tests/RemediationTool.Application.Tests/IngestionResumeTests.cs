@@ -60,12 +60,12 @@ public sealed class IngestionResumeTests
         Assert.False(response.IsResumeEligible);
         Assert.Equal("This ingestion job is not eligible for resume.", response.Message);
         stagingRepository.Verify(
-            repository => repository.GetByJobId(It.IsAny<string>()),
+            repository => repository.CountByJobId(It.IsAny<string>()),
             Times.Never);
         workingFileStrategy.Verify(
             strategy => strategy.ReadAfterAsync(
                 It.IsAny<string>(),
-                It.IsAny<long>(),
+                It.IsAny<int>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
     }
