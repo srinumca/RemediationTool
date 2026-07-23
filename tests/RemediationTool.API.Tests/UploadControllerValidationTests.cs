@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using RemediationTool.API.Authorization;
 using RemediationTool.API.Controllers;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Models;
@@ -14,6 +16,19 @@ namespace RemediationTool.API.Tests;
 
 public sealed class UploadControllerValidationTests
 {
+    [Fact]
+    public void UploadController_UsesInternalApplicationPolicy()
+    {
+        var authorizeAttribute = Assert.Single(
+            typeof(UploadController)
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+                .Cast<AuthorizeAttribute>());
+
+        Assert.Equal(
+            AuthorizationPolicies.InternalApplication,
+            authorizeAttribute.Policy);
+    }
+
     [Fact]
     public async Task Upload_MissingFile_ReturnsBadRequestWithoutCallingStorage()
     {
