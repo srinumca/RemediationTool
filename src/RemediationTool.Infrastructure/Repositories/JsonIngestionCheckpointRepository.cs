@@ -22,6 +22,18 @@ public class JsonIngestionCheckpointRepository : IIngestionCheckpointRepository
             JsonFileHelper.WriteAllText(_filePath, "[]");
     }
 
+    public IngestionCheckpoint? GetByJobId(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return null;
+
+        lock (_lock)
+        {
+            return LoadAll().Find(checkpoint =>
+                string.Equals(checkpoint.JobId, jobId, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     public void Upsert(IngestionCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);

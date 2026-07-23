@@ -12,7 +12,8 @@ using System.Globalization;
 namespace RemediationTool.Infrastructure.Repositories;
 
 /// <summary>
-/// Accelerates staging write and cleanup paths with fully awaited bounded DynamoDB I/O.
+/// Preserves staging as a complete resume fallback while accelerating its
+/// write, read and cleanup paths with fully awaited bounded DynamoDB I/O.
 /// </summary>
 public sealed class ConcurrentDynamoDbIngestionStagingRepository :
     IIngestionStagingRepository,
@@ -155,6 +156,121 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository :
                 stopwatch.ElapsedMilliseconds);
             throw;
         }
+    }
+
+    public List<FileFinding> GetValidFindingsAfter(
+        string jobId,
+        int lastProcessedRecordCount)
+        => GetValidFindingsAfterAsync(jobId, lastProcessedRecordCount)
+            .GetAwaiter()
+            .GetResult();
+
+    public async Task<List<FileFinding>> GetValidFindingsAfterAsync(
+        string jobId,
+        int lastProcessedRecordCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return new List<FileFinding>();
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+            return _inner.GetValidFindingsAfter(jobId, lastProcessedRecordCount);
+
+        _logger.LogInformation(
+            "[STAGING_RESUME_READ] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}",
+            jobId,
+            lastProcessedRecordCount);
+
+        var findings = new List<FileFinding>();
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var response = await _dynamoDb.QueryAsync(
+                new QueryRequest
+                {
+                    TableName = _tableName,
+                    KeyConditionExpression = "jobId = :jobId AND sequenceNumber > :lastSeq",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":jobId"] = new AttributeValue { S = jobId },
+                        [":lastSeq"] = new AttributeValue
+                        {
+                            N = lastProcessedRecordCount.ToString(CultureInfo.InvariantCulture)
+                        }
+                    },
+                    ScanIndexForward = true,
+                    ExclusiveStartKey = lastKey
+                },
+                cancellationToken);
+
+            findings.EnsureCapacity(findings.Count + response.Items.Count);
+            foreach (var item in response.Items)
+            {
+                if (item.TryGetValue("finding", out var findingAttribute)
+                    && findingAttribute.M != null)
+                {
+                    findings.Add(DynamoDbAttributeMap.ToFileFinding(findingAttribute.M));
+                }
+            }
+
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+        }
+        while (lastKey != null);
+
+        _logger.LogInformation(
+            "[STAGING_RESUME_READ_COMPLETE] JobId:{JobId}, LastProcessedRecordCount:{LastProcessedRecordCount}, Records:{Records}",
+            jobId,
+            lastProcessedRecordCount,
+            findings.Count);
+
+        return findings;
+    }
+
+    public int CountByJobId(string jobId)
+        => CountByJobIdAsync(jobId).GetAwaiter().GetResult();
+
+    public async Task<int> CountByJobIdAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return 0;
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_enableBoundedConcurrency)
+            return _inner.CountByJobId(jobId);
+
+        var count = 0;
+        Dictionary<string, AttributeValue>? lastKey = null;
+
+        do
+        {
+            var response = await _dynamoDb.QueryAsync(
+                new QueryRequest
+                {
+                    TableName = _tableName,
+                    KeyConditionExpression = "jobId = :jobId",
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                    {
+                        [":jobId"] = new AttributeValue { S = jobId }
+                    },
+                    Select = Select.COUNT,
+                    ExclusiveStartKey = lastKey
+                },
+                cancellationToken);
+
+            count += response.Count ?? 0;
+            lastKey = GetNextKey(response.LastEvaluatedKey);
+        }
+        while (lastKey != null);
+
+        return count;
     }
 
     public void DeleteByJobId(string jobId)

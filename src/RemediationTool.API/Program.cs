@@ -198,6 +198,7 @@ try
     // ─── Application services ─────────────────────────────────────────────────
     builder.Services.AddScoped<UploadService>();
     builder.Services.AddScoped<IngestionService>();
+    builder.Services.AddScoped<IIngestionResumeService, IngestionResumeService>();
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     var app = builder.Build();
