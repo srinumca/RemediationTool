@@ -143,7 +143,7 @@ public sealed class IngestionResumeServiceTests
             dependencies.Findings.Object,
             dependencies.Storage.Object,
             dependencies.JobAudits.Object,
-            Options.Create(new IngestionProcessingOptions
+            Microsoft.Extensions.Options.Options.Create(new IngestionProcessingOptions
             {
                 BatchSize = 100,
                 MinBatchSize = 100,
