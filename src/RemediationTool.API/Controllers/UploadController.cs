@@ -37,13 +37,23 @@ public class UploadController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(
-        IFormFile file,
+        IFormFile? file,
         CancellationToken cancellationToken)
     {
+        if (file is null)
+        {
+            _logger.LogWarning("[UPLOAD BAD REQUEST] No file was provided.");
+            return BadRequest(new UploadResponse
+            {
+                IsSuccess = false,
+                Message = "A file is required."
+            });
+        }
+
         _logger.LogInformation(
             "[UPLOAD REQUEST] FileName: {FileName} Size: {Size}",
-            file?.FileName,
-            file?.Length);
+            file.FileName,
+            file.Length);
 
         try
         {
@@ -53,7 +63,7 @@ public class UploadController : ControllerBase
             {
                 _logger.LogWarning(
                     "[UPLOAD RESPONSE] FileName: {FileName} — returned 400 BadRequest. Message: {Message}",
-                    file?.FileName,
+                    file.FileName,
                     response.Message);
                 return BadRequest(response);
             }
@@ -68,7 +78,7 @@ public class UploadController : ControllerBase
             _logger.LogWarning(
                 ex,
                 "[UPLOAD BAD REQUEST] FileName: {FileName} Reason: {Message}",
-                file?.FileName,
+                file.FileName,
                 ex.Message);
 
             return BadRequest(new UploadResponse
