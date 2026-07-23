@@ -10,7 +10,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastruct
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.API", "src/RemediationTool.API/RemediationTool.API.csproj", "{631174F7-96A0-414B-B72B-EEEAE011190B}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46D12}") = "Tests", "Tests", "{7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{7D10A0E8-A9B6-4C50-8F95-7B4202A1E420}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemediationTool.Infrastructure.Tests", "tests/RemediationTool.Infrastructure.Tests/RemediationTool.Infrastructure.Tests.csproj", "{A1F83B6B-6E16-4A6F-907F-13243B5195E2}"
 EndProject
