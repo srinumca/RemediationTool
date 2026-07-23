@@ -32,9 +32,9 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     var authenticationEnabled = builder.Configuration.GetValue<bool>("Authentication:Enabled");
-    var swaggerEnabled = builder.Environment.IsDevelopment()
-        || builder.Configuration.GetValue<bool>("Swagger:Enabled");
     var azureAdTenantId = builder.Configuration["AzureAd:TenantId"] ?? string.Empty;
+    var delegatedScope = builder.Configuration["AzureAd:Scopes"] ?? string.Empty;
+    var applicationRole = builder.Configuration["AzureAd:ApplicationRole"] ?? string.Empty;
 
     if (authenticationEnabled)
     {
@@ -42,7 +42,8 @@ try
         {
             (Key: "AzureAd:TenantId", Value: azureAdTenantId),
             (Key: "AzureAd:ClientId", Value: builder.Configuration["AzureAd:ClientId"]),
-            (Key: "AzureAd:Audience", Value: builder.Configuration["AzureAd:Audience"])
+            (Key: "AzureAd:Scopes", Value: delegatedScope),
+            (Key: "AzureAd:ApplicationRole", Value: applicationRole)
         }
         .Where(setting => string.IsNullOrWhiteSpace(setting.Value))
         .Select(setting => setting.Key)
@@ -95,13 +96,20 @@ try
             options.FallbackPolicy = new AuthorizationPolicyBuilder(
                     JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
+                .RequireAssertion(context =>
+                {
+                    return AuthorizationClaimChecks.HasScope(context.User, delegatedScope)
+                        || AuthorizationClaimChecks.HasRole(context.User, applicationRole);
+                })
                 .Build();
         }
     });
 
     builder.Services.AddRemediationAuthorizationPolicies(
         builder.Configuration,
-        authenticationEnabled);
+        authenticationEnabled,
+        delegatedScope,
+        applicationRole);
 
     // ─── Controllers ─────────────────────────────────────────────────────────
     builder.Services.AddControllers()
@@ -125,7 +133,7 @@ try
                 Scheme = "bearer",
                 BearerFormat = "JWT",
                 In = ParameterLocation.Header,
-                Description = "Enter a Microsoft Entra access token. Swagger adds the Bearer prefix automatically."
+                Description = "Enter a valid Microsoft Entra access token. Do not include the Bearer prefix."
             });
 
             c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -204,6 +212,8 @@ try
     builder.Services.AddSingleton<IAuditLogger, SerilogAuditLogger>();
 
     var app = builder.Build();
+    var swaggerEnabled = app.Environment.IsDevelopment()
+        || builder.Configuration.GetValue<bool>("Swagger:Enabled");
 
     // ─── DynamoDB table initialisation ───────────────────────────────────────
     if (persistenceProvider.Equals("DynamoDB", StringComparison.OrdinalIgnoreCase))

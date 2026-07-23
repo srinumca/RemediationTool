@@ -9,7 +9,7 @@
         "AWS_DEFAULT_REGION": "us-east-2",
         "AWS_PROFILE": "saml"
       },
-      "applicationUrl": "https://localhost:58207;http://localhost:58208"
+      "applicationUrl": "https://localhost:58209;http://localhost:58208"
     }
   }
 }
