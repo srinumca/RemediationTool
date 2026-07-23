@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using RemediationTool.Application.Exceptions;
 using RemediationTool.Application.Interfaces;
@@ -151,7 +150,7 @@ public sealed class IngestionResumeServiceTests
                 EnableBatchCheckpointing = true,
                 EnableParquetWorkingFile = true,
                 LegacyFallbackEnabled = true,
-                MaxBatchPersistenceRetryCount = 0,
+                MaxBatchPersistenceRetryCount = 1,
                 BatchPersistenceRetryDelayMilliseconds = 0
             }),
             dependencies.Checkpoints.Object,
