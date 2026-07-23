@@ -39,19 +39,13 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
 
         ArgumentNullException.ThrowIfNull(validFindings);
 
-        var workingFilePath = IngestionWorkingFilePathBuilder.BuildParquetPath(
-            jobId,
-            inboundFileName,
-            DateTime.UtcNow);
+        var workingFilePath = IngestionWorkingFilePathBuilder.BuildParquetPath(jobId, inboundFileName, DateTime.UtcNow);
         var rowGroupSize = Math.Max(1, _options.ParquetRowGroupSize);
         var parquetOptions = new ParquetOptions { RowGroupSize = rowGroupSize };
 
         _logger.LogInformation(
             "[PARQUET_WRITE_START] JobId:{JobId}, Path:{Path}, Records:{Records}, RowGroupSize:{RowGroupSize}",
-            jobId,
-            workingFilePath,
-            validFindings.Count,
-            rowGroupSize);
+            jobId, workingFilePath, validFindings.Count, rowGroupSize);
 
         await using Stream parquetStream = _options.EnableHighVolumeStreaming
             ? TemporarySeekableStream.Create()
@@ -93,6 +87,100 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             Path = workingFilePath,
             RecordCount = validFindings.Count
         };
+    }
+
+    public async Task<List<FileFinding>> ReadAfterAsync(
+        string workingFilePath,
+        int lastProcessedRecordCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(workingFilePath))
+            throw new ArgumentException("Working file path is required.", nameof(workingFilePath));
+
+        if (lastProcessedRecordCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(lastProcessedRecordCount));
+
+        _logger.LogInformation(
+            "[PARQUET_RESUME_READ_START] Path:{Path}, LastProcessedRecordCount:{LastProcessedRecordCount}",
+            workingFilePath, lastProcessedRecordCount);
+
+        await using var parquetStream = await OpenSeekableReadAsync(
+            workingFilePath,
+            cancellationToken);
+        if (parquetStream.CanSeek)
+            parquetStream.Position = 0;
+
+        var deserializationResult = await ParquetSerializer.DeserializeAsync<ParquetFindingRow>(
+            parquetStream,
+            cancellationToken: cancellationToken);
+
+        var rows = ExtractRows(deserializationResult);
+        if (lastProcessedRecordCount >= rows.Count)
+        {
+            _logger.LogInformation(
+                "[PARQUET_RESUME_READ_COMPLETE] Path:{Path}, TotalRows:{TotalRows}, RemainingRecords:0",
+                workingFilePath, rows.Count);
+            return new List<FileFinding>();
+        }
+
+        var findings = rows
+            .Skip(lastProcessedRecordCount)
+            .Select(ToFileFinding)
+            .ToList();
+
+        _logger.LogInformation(
+            "[PARQUET_RESUME_READ_COMPLETE] Path:{Path}, TotalRows:{TotalRows}, RemainingRecords:{RemainingRecords}",
+            workingFilePath, rows.Count, findings.Count);
+
+        return findings;
+    }
+
+    private Task<Stream> OpenSeekableReadAsync(
+        string workingFilePath,
+        CancellationToken cancellationToken)
+    {
+        if (_options.EnableHighVolumeStreaming
+            && _storage is IStreamingStorageService streamingStorage)
+        {
+            return streamingStorage.OpenSeekableReadAsync(
+                workingFilePath,
+                cancellationToken);
+        }
+
+        if (_options.EnableHighVolumeStreaming
+            && !_options.LegacyFallbackEnabled)
+        {
+            throw new InvalidOperationException(
+                "High-volume Parquet reading requires streaming storage, but no compatible implementation is registered and legacy fallback is disabled.");
+        }
+
+        return _storage.DownloadAsync(workingFilePath, cancellationToken);
+    }
+
+    private static List<ParquetFindingRow> ExtractRows(object? deserializationResult)
+    {
+        if (deserializationResult == null)
+            return new List<ParquetFindingRow>();
+
+        if (deserializationResult is IEnumerable<ParquetFindingRow> directRows)
+            return directRows.ToList();
+
+        var propertyNames = new[] { "Data", "Rows", "Items", "Values", "Records" };
+        var resultType = deserializationResult.GetType();
+
+        foreach (var propertyName in propertyNames)
+        {
+            var property = resultType.GetProperty(propertyName);
+            if (property == null)
+                continue;
+
+            var value = property.GetValue(deserializationResult);
+            if (value is IEnumerable<ParquetFindingRow> rows)
+                return rows.ToList();
+        }
+
+        throw new InvalidOperationException(
+            $"Unable to read Parquet rows from deserialization result type {resultType.FullName}.");
     }
 
     private static ParquetFindingRow ToParquetRow(FileFinding finding)
@@ -145,11 +233,77 @@ public class ParquetIngestionWorkingFileStrategy : IIngestionWorkingFileStrategy
             RestorationComment = finding.RestorationComment
         };
 
+    private static FileFinding ToFileFinding(ParquetFindingRow row)
+    {
+        var statusText = string.IsNullOrWhiteSpace(row.StatusColumnValue) ? row.Status : row.StatusColumnValue;
+
+        var finding = new FileFinding
+        {
+            Id = Guid.TryParse(row.Id, out var id) ? id : Guid.NewGuid(),
+            RecordVersionId = row.RecordVersionId ?? string.Empty,
+            SourceRecordId = NullIfWhiteSpace(row.SourceRecordId),
+            IngestionJobId = NullIfWhiteSpace(row.IngestionJobId),
+            InboundFileName = row.InboundFileName ?? string.Empty,
+            UserName = string.IsNullOrWhiteSpace(row.UserName) ? "System" : row.UserName,
+            LoadDateUtc = ParseDate(row.LoadDateUtc) ?? DateTime.UtcNow,
+            LastUpdateDateUtc = ParseDate(row.LastUpdateDateUtc) ?? DateTime.UtcNow,
+            FindingFileName = row.FindingFileName ?? string.Empty,
+            FindingFileFormat = row.FindingFileFormat ?? string.Empty,
+            FindingFileSizeBytes = ParseLong(row.FindingFileSizeBytes),
+            CurrentFileLocation = row.CurrentFileLocation ?? string.Empty,
+            OriginatingDataSystem = row.OriginatingDataSystem ?? string.Empty,
+            OriginatingVendorTool = row.OriginatingVendorTool ?? string.Empty,
+            SourceSystemPlatform = NullIfWhiteSpace(row.DataSystem),
+            ErrorCategory = NullIfWhiteSpace(row.ErrorCategory),
+            LastModifiedDateUtc = ParseDate(row.LastModifiedDateUtc),
+            CreatedDateUtc = ParseDate(row.CreatedDateUtc),
+            LastAccessedDateUtc = ParseDate(row.LastAccessedDateUtc),
+            DetectionDateUtc = ParseDate(row.DetectionDateUtc),
+            SiteOwner = NullIfWhiteSpace(row.SiteOwner),
+            FileOwner = NullIfWhiteSpace(row.FileOwner),
+            BusinessUnit = NullIfWhiteSpace(row.BusinessUnit),
+            Division = NullIfWhiteSpace(row.Division),
+            Department = NullIfWhiteSpace(row.Department),
+            Region = NullIfWhiteSpace(row.Region),
+            Country = NullIfWhiteSpace(row.Country),
+            PolicyName = NullIfWhiteSpace(row.PolicyName),
+            PolicyId = NullIfWhiteSpace(row.PolicyId),
+            FindingReason = NullIfWhiteSpace(row.FindingReason),
+            RiskLevel = NullIfWhiteSpace(row.RiskLevel),
+            SensitivityLabel = NullIfWhiteSpace(row.SensitivityLabel),
+            RecommendedAction = NullIfWhiteSpace(row.RecommendedAction),
+            OriginalFileLocation = NullIfWhiteSpace(row.OriginalFileLocation),
+            QuarantineDateUtc = ParseDate(row.QuarantineDateUtc),
+            RestoredDateUtc = ParseDate(row.RestoredDateUtc),
+            ExceptionDateUtc = ParseDate(row.ExceptionDateUtc),
+            DeletedDateUtc = ParseDate(row.DeletedDateUtc),
+            RestorationTicketIdentifier = NullIfWhiteSpace(row.RestorationTicketIdentifier),
+            RestorationRequestorEmail = NullIfWhiteSpace(row.RestorationRequestorEmail),
+            RestorationComment = NullIfWhiteSpace(row.RestorationComment)
+        };
+
+        finding.FindingType = row.FindingType ?? string.Empty;
+        finding.Status = FileFinding.ResolveStatusFromStoredValue(statusText);
+        finding.StatusColumnValue = string.IsNullOrWhiteSpace(statusText) ? finding.Status.ToString() : statusText;
+        finding.ErrorReason = row.ErrorReason ?? string.Empty;
+
+        return finding;
+    }
+
     private static string? ToText(DateTime? value)
         => value.HasValue ? value.Value.ToUniversalTime().ToString("O") : null;
 
     private static string ToText(DateTime value)
         => value.ToUniversalTime().ToString("O");
+
+    private static DateTime? ParseDate(string? value)
+        => DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : null;
+
+    private static long? ParseLong(string? value)
+        => long.TryParse(value, out var parsed) ? parsed : null;
+
+    private static string? NullIfWhiteSpace(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private sealed class ParquetFindingRow
     {

@@ -54,6 +54,49 @@ public class JsonIngestionStagingRepository : IIngestionStagingRepository
         }
     }
 
+    public List<FileFinding> GetValidFindingsAfter(
+        string jobId,
+        int lastProcessedRecordCount)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return new List<FileFinding>();
+
+        lock (_lock)
+        {
+            var stagedFindings = LoadAll();
+            var result = new List<FileFinding>();
+
+            foreach (var record in stagedFindings)
+            {
+                if (record.SequenceNumber > lastProcessedRecordCount
+                    && string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(record.Finding);
+                }
+            }
+
+            return result;
+        }
+    }
+
+    public int CountByJobId(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return 0;
+
+        lock (_lock)
+        {
+            var count = 0;
+            foreach (var record in LoadAll())
+            {
+                if (string.Equals(record.JobId, jobId, StringComparison.OrdinalIgnoreCase))
+                    count++;
+            }
+
+            return count;
+        }
+    }
+
     public void DeleteByJobId(string jobId)
     {
         if (string.IsNullOrWhiteSpace(jobId))
