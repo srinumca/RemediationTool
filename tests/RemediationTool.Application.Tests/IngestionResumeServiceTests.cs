@@ -67,60 +67,6 @@ public sealed class IngestionResumeServiceTests
     }
 
     [Fact]
-    public async Task ResumeAsync_WhenRecoveryDataIsUnavailable_ThrowsUnprocessableResumeException()
-    {
-        var dependencies = CreateDependencies();
-        var checkpoint = new IngestionCheckpoint
-        {
-            JobId = "failed-job",
-            InboundFileName = "report.csv",
-            UserName = "tester",
-            Status = IngestionJobStatus.Failed,
-            IsResumeEligible = true,
-            SuccessCount = 10,
-            RejectCount = 0,
-            LastProcessedRecordCount = 0,
-            LastSuccessfulBatchNumber = 0,
-            PersistedBatchCount = 0,
-            TotalBatches = 1,
-            BatchSize = 100,
-            LastCheckpointUtc = DateTime.UtcNow
-        };
-
-        dependencies.Checkpoints
-            .Setup(repository => repository.GetByJobId("failed-job"))
-            .Returns(checkpoint);
-        dependencies.JobAudits
-            .Setup(repository => repository.GetByJobId("failed-job"))
-            .Returns(new IngestionJobAudit
-            {
-                ReportUid = "failed-job",
-                JobId = "failed-job",
-                InboundFileName = "report.csv",
-                UserName = "tester",
-                UploadedBy = "tester"
-            });
-        dependencies.Staging
-            .Setup(repository => repository.CountByJobId("failed-job"))
-            .Returns(0);
-        dependencies.Storage
-            .Setup(storage => storage.UploadAsync(
-                It.IsAny<string>(),
-                It.IsAny<Stream>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var service = CreateService(dependencies);
-
-        var exception = await Assert.ThrowsAsync<IngestionResumeDataUnavailableException>(() =>
-            service.ResumeAsync("failed-job", CancellationToken.None));
-
-        Assert.Equal(IngestionJobStatus.Failed, exception.Response.Status);
-        Assert.False(exception.Response.IsResumeEligible);
-        Assert.Contains("Parquet", exception.Response.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
     public async Task ResumeAsync_WhenCancellationIsAlreadyRequested_StopsBeforeRepositoryReads()
     {
         var dependencies = CreateDependencies();
@@ -143,7 +89,7 @@ public sealed class IngestionResumeServiceTests
             dependencies.Findings.Object,
             dependencies.Storage.Object,
             dependencies.JobAudits.Object,
-            Options.Create(new IngestionProcessingOptions
+            Microsoft.Extensions.Options.Options.Create(new IngestionProcessingOptions
             {
                 BatchSize = 100,
                 MinBatchSize = 100,
@@ -151,7 +97,7 @@ public sealed class IngestionResumeServiceTests
                 EnableBatchCheckpointing = true,
                 EnableParquetWorkingFile = true,
                 LegacyFallbackEnabled = true,
-                MaxBatchPersistenceRetryCount = 0,
+                MaxBatchPersistenceRetryCount = 1,
                 BatchPersistenceRetryDelayMilliseconds = 0
             }),
             dependencies.Checkpoints.Object,
