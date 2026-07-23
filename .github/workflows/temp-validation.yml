@@ -1,6 +1,9 @@
 name: Temporary validation
 
 on:
+  push:
+    branches:
+      - agent/fix-api-startup
   pull_request:
     branches:
       - main
