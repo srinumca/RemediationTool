@@ -36,7 +36,17 @@ public sealed class SourceSystemRepositoryTests
                 (request, _) => capturedRequest = request)
             .ReturnsAsync(new GetItemResponse
             {
-                Item = CreateNetAppItem()
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["sourceSystem"] = new() { S = "NetApp" },
+                    ["createdAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" },
+                    ["dataSystem"] = new() { S = "NetApp" },
+                    ["description"] = new() { S = "On-premises NetApp filer integration" },
+                    ["displayName"] = new() { S = "NetApp File Server" },
+                    ["isEnabled"] = new() { BOOL = true },
+                    ["originatingDataSystem"] = new() { S = "smb" },
+                    ["updatedAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" }
+                }
             });
         var repository = CreateRepository(client);
 
@@ -73,19 +83,6 @@ public sealed class SourceSystemRepositoryTests
 
         Assert.Null(result);
     }
-
-    private static Dictionary<string, AttributeValue> CreateNetAppItem()
-        => new()
-        {
-            ["sourceSystem"] = new() { S = "NetApp" },
-            ["createdAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" },
-            ["dataSystem"] = new() { S = "NetApp" },
-            ["description"] = new() { S = "On-premises NetApp filer integration" },
-            ["displayName"] = new() { S = "NetApp File Server" },
-            ["isEnabled"] = new() { BOOL = true },
-            ["originatingDataSystem"] = new() { S = "smb" },
-            ["updatedAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" }
-        };
 
     private static DynamoDbSourceSystemRepository CreateRepository(
         Mock<IAmazonDynamoDB> client)
