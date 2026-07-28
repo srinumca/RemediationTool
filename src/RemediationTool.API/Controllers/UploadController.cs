@@ -1,14 +1,15 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RemediationTool.API.Authorization;
+using RemediationTool.API.Models;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
 
 namespace RemediationTool.API.Controllers;
 
 /// <summary>
-/// Upload API — receives an EDG report file, stores it, creates the ingestion
-/// job record, and returns the generated ReportUID for asynchronous processing.
+/// Upload API — receives an EDG report file and source system, stores the file,
+/// creates the ingestion job record, and returns the generated ReportUID.
 /// </summary>
 [Authorize(Policy = AuthorizationPolicies.InternalApplication)]
 [ApiController]
@@ -27,19 +28,23 @@ public class UploadController : ControllerBase
     }
 
     /// <summary>
-    /// Accepts an EDG CSV or XLSX report, stores it, creates the ingestion job,
-    /// and returns 202 Accepted with the ReportUID.
+    /// Accepts an EDG CSV or XLSX report and a source-system value, stores the file,
+    /// creates the ingestion job, and returns 202 Accepted with the ReportUID.
     /// </summary>
     [HttpPost]
+    [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(
-        IFormFile? file,
+        [FromForm] UploadRequest? request,
         CancellationToken cancellationToken)
     {
+        var file = request?.File;
+        var sourceSystem = request?.SourceSystem;
+
         if (file is null)
         {
             _logger.LogWarning("[UPLOAD BAD REQUEST] No file was provided.");
@@ -50,14 +55,30 @@ public class UploadController : ControllerBase
             });
         }
 
+        if (string.IsNullOrWhiteSpace(sourceSystem))
+        {
+            _logger.LogWarning(
+                "[UPLOAD BAD REQUEST] FileName: {FileName} — no source system was provided.",
+                file.FileName);
+            return BadRequest(new UploadResponse
+            {
+                IsSuccess = false,
+                Message = "Source system is required."
+            });
+        }
+
         _logger.LogInformation(
-            "[UPLOAD REQUEST] FileName: {FileName} Size: {Size}",
+            "[UPLOAD REQUEST] FileName: {FileName} Size: {Size} SourceSystem: {SourceSystem}",
             file.FileName,
-            file.Length);
+            file.Length,
+            sourceSystem);
 
         try
         {
-            var response = await _uploadService.UploadAsync(file, cancellationToken);
+            var response = await _uploadService.UploadAsync(
+                file,
+                sourceSystem,
+                cancellationToken);
 
             if (!response.IsSuccess)
             {
@@ -77,8 +98,9 @@ public class UploadController : ControllerBase
         {
             _logger.LogWarning(
                 ex,
-                "[UPLOAD BAD REQUEST] FileName: {FileName} Reason: {Message}",
+                "[UPLOAD BAD REQUEST] FileName: {FileName} SourceSystem: {SourceSystem} Reason: {Message}",
                 file.FileName,
+                sourceSystem,
                 ex.Message);
 
             return BadRequest(new UploadResponse

@@ -14,6 +14,7 @@ public class DynamoDbOptions
     public string CheckpointsTableName { get; set; } = "gfr-ingestion-checkpoints-dev";
     public string StagedFindingsTableName { get; set; } = "gfr-ingestion-staged-findings-dev";
     public string HistoryTableName { get; set; } = "gfr-finding-history-dev";
+    public string SourceSystemsTableName { get; set; } = "gfr-edg-source-systems";
 
     /// <summary>
     /// Maximum number of independent 25-item BatchWriteItem requests executed at once.
