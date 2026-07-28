@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RemediationTool.API.Authorization;
+using RemediationTool.API.Models;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Services;
 
@@ -38,10 +39,12 @@ public class UploadController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Upload(
-        [FromForm] IFormFile? file,
-        [FromForm] string? sourceSystem,
+        [FromForm] UploadRequest? request,
         CancellationToken cancellationToken)
     {
+        var file = request?.File;
+        var sourceSystem = request?.SourceSystem;
+
         if (file is null)
         {
             _logger.LogWarning("[UPLOAD BAD REQUEST] No file was provided.");
