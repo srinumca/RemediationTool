@@ -59,17 +59,7 @@ public sealed class DynamoDbSourceSystemRepository : ISourceSystemRepository
                 return null;
             }
 
-            return new SourceSystemDefinition
-            {
-                SourceSystem = GetString(response.Item, "sourceSystem") ?? normalizedSourceSystem,
-                CreatedAt = GetDate(response.Item, "createdAt"),
-                DataSystem = GetString(response.Item, "dataSystem"),
-                Description = GetString(response.Item, "description"),
-                DisplayName = GetString(response.Item, "displayName"),
-                IsEnabled = GetBoolean(response.Item, "isEnabled"),
-                OriginatingDataSystem = GetString(response.Item, "originatingDataSystem"),
-                UpdatedAt = GetDate(response.Item, "updatedAt")
-            };
+            return Map(response.Item, normalizedSourceSystem);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -84,6 +74,77 @@ public sealed class DynamoDbSourceSystemRepository : ISourceSystemRepository
                 _tableName);
             throw;
         }
+    }
+
+    public async Task<IReadOnlyList<SourceSystemDefinition>> GetEnabledAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var results = new List<SourceSystemDefinition>();
+        Dictionary<string, AttributeValue>? lastEvaluatedKey = null;
+
+        try
+        {
+            do
+            {
+                var response = await _dynamoDb.ScanAsync(
+                    new ScanRequest
+                    {
+                        TableName = _tableName,
+                        ConsistentRead = true,
+                        FilterExpression = "isEnabled = :enabled",
+                        ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                        {
+                            [":enabled"] = new AttributeValue { BOOL = true }
+                        },
+                        ExclusiveStartKey = lastEvaluatedKey
+                    },
+                    cancellationToken);
+
+                foreach (var item in response.Items)
+                {
+                    var definition = Map(item);
+                    if (!string.IsNullOrWhiteSpace(definition.SourceSystem) && definition.IsEnabled)
+                        results.Add(definition);
+                }
+
+                lastEvaluatedKey = response.LastEvaluatedKey;
+            }
+            while (lastEvaluatedKey is { Count: > 0 });
+
+            return results
+                .OrderBy(item => item.DisplayName ?? item.SourceSystem, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SourceSystem, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to read enabled source systems. Table: {TableName}",
+                _tableName);
+            throw;
+        }
+    }
+
+    private static SourceSystemDefinition Map(
+        IReadOnlyDictionary<string, AttributeValue> item,
+        string fallbackSourceSystem = "")
+    {
+        return new SourceSystemDefinition
+        {
+            SourceSystem = GetString(item, "sourceSystem") ?? fallbackSourceSystem,
+            CreatedAt = GetDate(item, "createdAt"),
+            DataSystem = GetString(item, "dataSystem"),
+            Description = GetString(item, "description"),
+            DisplayName = GetString(item, "displayName"),
+            IsEnabled = GetBoolean(item, "isEnabled"),
+            OriginatingDataSystem = GetString(item, "originatingDataSystem"),
+            UpdatedAt = GetDate(item, "updatedAt")
+        };
     }
 
     private static string? GetString(
