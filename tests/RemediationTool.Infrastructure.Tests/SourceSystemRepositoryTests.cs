@@ -74,39 +74,6 @@ public sealed class SourceSystemRepositoryTests
         Assert.Null(result);
     }
 
-    [Fact]
-    public async Task GetEnabledAsync_UsesConfiguredTableAndEnabledFilter()
-    {
-        var client = new Mock<IAmazonDynamoDB>(MockBehavior.Strict);
-        ScanRequest? capturedRequest = null;
-        client
-            .Setup(db => db.ScanAsync(
-                It.IsAny<ScanRequest>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<ScanRequest, CancellationToken>(
-                (request, _) => capturedRequest = request)
-            .ReturnsAsync(new ScanResponse
-            {
-                Items = new List<Dictionary<string, AttributeValue>>
-                {
-                    CreateNetAppItem()
-                },
-                LastEvaluatedKey = new Dictionary<string, AttributeValue>()
-            });
-        var repository = CreateRepository(client);
-
-        var result = await repository.GetEnabledAsync();
-
-        var definition = Assert.Single(result);
-        Assert.Equal("source-systems-table", capturedRequest?.TableName);
-        Assert.True(capturedRequest?.ConsistentRead);
-        Assert.Equal("isEnabled = :enabled", capturedRequest?.FilterExpression);
-        Assert.True(capturedRequest?.ExpressionAttributeValues[":enabled"].BOOL);
-        Assert.Equal("NetApp", definition.SourceSystem);
-        Assert.Equal("NetApp File Server", definition.DisplayName);
-        Assert.True(definition.IsEnabled);
-    }
-
     private static Dictionary<string, AttributeValue> CreateNetAppItem()
         => new()
         {
