@@ -10,7 +10,4 @@ public interface ISourceSystemRepository
     Task<SourceSystemDefinition?> GetBySourceSystemAsync(
         string sourceSystem,
         CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<SourceSystemDefinition>> GetEnabledAsync(
-        CancellationToken cancellationToken = default);
 }
