@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RemediationTool.API.Controllers;
+using RemediationTool.API.Models;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Logging;
 using RemediationTool.Application.Models;
@@ -28,7 +29,13 @@ public sealed class ControllerResponseTests
         var controller = CreateUploadController();
         var file = CreateFormFile("report.csv", "header\nvalue");
 
-        var result = await controller.Upload(file, ValidSourceSystem, CancellationToken.None);
+        var result = await controller.Upload(
+            new UploadRequest
+            {
+                File = file,
+                SourceSystem = ValidSourceSystem
+            },
+            CancellationToken.None);
 
         var accepted = Assert.IsType<AcceptedResult>(result);
         var response = Assert.IsType<UploadResponse>(accepted.Value);
@@ -44,7 +51,13 @@ public sealed class ControllerResponseTests
         var controller = CreateUploadController();
         var file = CreateFormFile("report.txt", "content");
 
-        var result = await controller.Upload(file, ValidSourceSystem, CancellationToken.None);
+        var result = await controller.Upload(
+            new UploadRequest
+            {
+                File = file,
+                SourceSystem = ValidSourceSystem
+            },
+            CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var response = Assert.IsType<UploadResponse>(badRequest.Value);
