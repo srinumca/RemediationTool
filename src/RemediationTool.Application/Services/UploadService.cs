@@ -26,28 +26,47 @@ public class UploadService
 
     private readonly IStorageService _storage;
     private readonly IIngestionJobAuditRepository _jobAuditRepository;
+    private readonly ISourceSystemRepository _sourceSystemRepository;
     private readonly ILogger<UploadService> _logger;
     private readonly IngestionProcessingOptions _processingOptions;
 
     public UploadService(
         IStorageService storage,
         IIngestionJobAuditRepository jobAuditRepository,
+        ISourceSystemRepository sourceSystemRepository,
         ILogger<UploadService> logger,
         IOptions<IngestionProcessingOptions> processingOptions)
     {
         _storage = storage;
         _jobAuditRepository = jobAuditRepository;
+        _sourceSystemRepository = sourceSystemRepository;
         _logger = logger;
         _processingOptions = processingOptions.Value;
     }
 
     public async Task<UploadResponse> UploadAsync(
         IFormFile file,
+        string? sourceSystem,
         CancellationToken cancellationToken = default)
     {
         ValidateFile(file);
+        var requestedSourceSystem = ValidateSourceSystem(sourceSystem);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var sourceSystemDefinition = await _sourceSystemRepository.GetBySourceSystemAsync(
+            requestedSourceSystem,
+            cancellationToken);
+
+        if (sourceSystemDefinition is null || !sourceSystemDefinition.IsEnabled)
+        {
+            _logger.LogWarning(
+                "[UPLOAD REJECTED] SourceSystem: {SourceSystem} Reason: source system is invalid or disabled.",
+                requestedSourceSystem);
+            throw new InvalidDataException(
+                $"Source system '{requestedSourceSystem}' is invalid or disabled.");
+        }
+
+        var canonicalSourceSystem = sourceSystemDefinition.SourceSystem;
         var uploadedAtUtc = DateTime.UtcNow;
         var reportUid = IngestionJobIdGenerator.Generate();
         var inboundFileName = file.FileName;
@@ -68,10 +87,11 @@ public class UploadService
             uploadedAtUtc);
 
         _logger.LogInformation(
-            "[UPLOAD START] ReportUid: {ReportUid}, File: {File}, Size: {Size} bytes",
+            "[UPLOAD START] ReportUid: {ReportUid}, File: {File}, Size: {Size} bytes, SourceSystem: {SourceSystem}",
             reportUid,
             inboundFileName,
-            fileSizeBytes);
+            fileSizeBytes,
+            canonicalSourceSystem);
 
         await using (var fileStream = file.OpenReadStream())
         {
@@ -87,6 +107,7 @@ public class UploadService
             metadataPath,
             reportUid,
             inboundFileName,
+            canonicalSourceSystem,
             fileSizeBytes,
             fileFormat,
             s3FolderPath,
@@ -99,6 +120,7 @@ public class UploadService
             ReportUid = reportUid,
             JobId = reportUid,
             InboundFileName = inboundFileName,
+            SourceSystem = canonicalSourceSystem,
             FileSizeBytes = fileSizeBytes,
             FileFormat = fileFormat,
             S3FolderPath = s3FolderPath,
@@ -118,9 +140,10 @@ public class UploadService
         _jobAuditRepository.Add(jobAudit);
 
         _logger.LogInformation(
-            "[UPLOAD DB] ReportUid: {ReportUid} — job record created in DynamoDB. Status: {Status}",
+            "[UPLOAD DB] ReportUid: {ReportUid} — job record created in DynamoDB. Status: {Status}, SourceSystem: {SourceSystem}",
             reportUid,
-            jobAudit.Status);
+            jobAudit.Status,
+            canonicalSourceSystem);
 
         _logger.LogInformation(
             "[UPLOAD COMPLETE] ReportUid: {ReportUid}, S3: {S3Path} — returning 202 Accepted.",
@@ -133,6 +156,7 @@ public class UploadService
             ReportUid = reportUid,
             JobId = reportUid,
             InboundFileName = inboundFileName,
+            SourceSystem = canonicalSourceSystem,
             FileSizeBytes = fileSizeBytes,
             S3FolderPath = s3FolderPath,
             SourceFilePath = sourceFilePath,
@@ -177,10 +201,19 @@ public class UploadService
         }
     }
 
+    private static string ValidateSourceSystem(string? sourceSystem)
+    {
+        if (string.IsNullOrWhiteSpace(sourceSystem))
+            throw new InvalidDataException("Source system is required.");
+
+        return sourceSystem.Trim();
+    }
+
     private async Task SaveMetadataJsonAsync(
         string metadataPath,
         string reportUid,
         string inboundFileName,
+        string sourceSystem,
         long fileSizeBytes,
         string fileFormat,
         string s3FolderPath,
@@ -192,6 +225,7 @@ public class UploadService
         {
             ReportUid = reportUid,
             InboundFileName = inboundFileName,
+            SourceSystem = sourceSystem,
             FileSizeBytes = fileSizeBytes,
             FileFormat = fileFormat,
             S3FolderPath = s3FolderPath,
