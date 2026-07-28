@@ -20,18 +20,21 @@ namespace RemediationTool.API.Tests;
 
 public sealed class ControllerResponseTests
 {
+    private const string ValidSourceSystem = "NetApp";
+
     [Fact]
     public async Task Upload_ValidCsv_ReturnsAcceptedWithReportUid()
     {
         var controller = CreateUploadController();
         var file = CreateFormFile("report.csv", "header\nvalue");
 
-        var result = await controller.Upload(file, CancellationToken.None);
+        var result = await controller.Upload(file, ValidSourceSystem, CancellationToken.None);
 
         var accepted = Assert.IsType<AcceptedResult>(result);
         var response = Assert.IsType<UploadResponse>(accepted.Value);
         Assert.True(response.IsSuccess);
         Assert.False(string.IsNullOrWhiteSpace(response.ReportUid));
+        Assert.Equal(ValidSourceSystem, response.SourceSystem);
         Assert.Equal(IngestionJobStatus.Started, response.Status);
     }
 
@@ -41,7 +44,7 @@ public sealed class ControllerResponseTests
         var controller = CreateUploadController();
         var file = CreateFormFile("report.txt", "content");
 
-        var result = await controller.Upload(file, CancellationToken.None);
+        var result = await controller.Upload(file, ValidSourceSystem, CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var response = Assert.IsType<UploadResponse>(badRequest.Value);
@@ -119,16 +122,27 @@ public sealed class ControllerResponseTests
     {
         var storage = new Mock<IStorageService>();
         var jobAuditRepository = new Mock<IIngestionJobAuditRepository>();
+        var sourceSystemRepository = new Mock<ISourceSystemRepository>();
         storage
             .Setup(service => service.UploadAsync(
                 It.IsAny<string>(),
                 It.IsAny<Stream>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        sourceSystemRepository
+            .Setup(repository => repository.GetBySourceSystemAsync(
+                ValidSourceSystem,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SourceSystemDefinition
+            {
+                SourceSystem = ValidSourceSystem,
+                IsEnabled = true
+            });
 
         var service = new UploadService(
             storage.Object,
             jobAuditRepository.Object,
+            sourceSystemRepository.Object,
             NullLogger<UploadService>.Instance,
             Microsoft.Extensions.Options.Options.Create(
                 new IngestionProcessingOptions

@@ -23,6 +23,9 @@ public class UploadResponse
 
     public string InboundFileName { get; set; } = string.Empty;
 
+    /// <summary>Canonical source-system value selected for this upload.</summary>
+    public string SourceSystem { get; set; } = string.Empty;
+
     public long FileSizeBytes { get; set; }
 
     /// <summary>S3 folder prefix: {yyyy}/{MM}/{reportUid}/</summary>
