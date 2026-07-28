@@ -34,12 +34,4 @@ public sealed class LocalSourceSystemRepository : ISourceSystemRepository
 
         return Task.FromResult(result);
     }
-
-    public Task<IReadOnlyList<SourceSystemDefinition>> GetEnabledAsync(
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<SourceSystemDefinition> results = new[] { NetApp };
-        return Task.FromResult(results);
-    }
 }
