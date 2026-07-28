@@ -36,17 +36,7 @@ public sealed class SourceSystemRepositoryTests
                 (request, _) => capturedRequest = request)
             .ReturnsAsync(new GetItemResponse
             {
-                Item = new Dictionary<string, AttributeValue>
-                {
-                    ["sourceSystem"] = new() { S = "NetApp" },
-                    ["createdAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" },
-                    ["dataSystem"] = new() { S = "NetApp" },
-                    ["description"] = new() { S = "On-premises NetApp filer integration" },
-                    ["displayName"] = new() { S = "NetApp File Server" },
-                    ["isEnabled"] = new() { BOOL = true },
-                    ["originatingDataSystem"] = new() { S = "smb" },
-                    ["updatedAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" }
-                }
+                Item = CreateNetAppItem()
             });
         var repository = CreateRepository(client);
 
@@ -83,6 +73,52 @@ public sealed class SourceSystemRepositoryTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task GetEnabledAsync_UsesConfiguredTableAndEnabledFilter()
+    {
+        var client = new Mock<IAmazonDynamoDB>(MockBehavior.Strict);
+        ScanRequest? capturedRequest = null;
+        client
+            .Setup(db => db.ScanAsync(
+                It.IsAny<ScanRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<ScanRequest, CancellationToken>(
+                (request, _) => capturedRequest = request)
+            .ReturnsAsync(new ScanResponse
+            {
+                Items = new List<Dictionary<string, AttributeValue>>
+                {
+                    CreateNetAppItem()
+                },
+                LastEvaluatedKey = new Dictionary<string, AttributeValue>()
+            });
+        var repository = CreateRepository(client);
+
+        var result = await repository.GetEnabledAsync();
+
+        var definition = Assert.Single(result);
+        Assert.Equal("source-systems-table", capturedRequest?.TableName);
+        Assert.True(capturedRequest?.ConsistentRead);
+        Assert.Equal("isEnabled = :enabled", capturedRequest?.FilterExpression);
+        Assert.True(capturedRequest?.ExpressionAttributeValues[":enabled"].BOOL);
+        Assert.Equal("NetApp", definition.SourceSystem);
+        Assert.Equal("NetApp File Server", definition.DisplayName);
+        Assert.True(definition.IsEnabled);
+    }
+
+    private static Dictionary<string, AttributeValue> CreateNetAppItem()
+        => new()
+        {
+            ["sourceSystem"] = new() { S = "NetApp" },
+            ["createdAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" },
+            ["dataSystem"] = new() { S = "NetApp" },
+            ["description"] = new() { S = "On-premises NetApp filer integration" },
+            ["displayName"] = new() { S = "NetApp File Server" },
+            ["isEnabled"] = new() { BOOL = true },
+            ["originatingDataSystem"] = new() { S = "smb" },
+            ["updatedAt"] = new() { S = "2026-07-28T06:41:57.8727778Z" }
+        };
 
     private static DynamoDbSourceSystemRepository CreateRepository(
         Mock<IAmazonDynamoDB> client)
