@@ -1,0 +1,27 @@
+name: Source System Validation
+
+on:
+  push:
+    branches:
+      - feature/source-system-upload-validation
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore RemediationTool.sln
+
+      - name: Build
+        run: dotnet build RemediationTool.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test RemediationTool.sln --configuration Release --no-build --verbosity normal
