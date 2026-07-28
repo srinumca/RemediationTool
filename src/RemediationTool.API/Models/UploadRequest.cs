@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 
 namespace RemediationTool.API.Models;
 
@@ -8,8 +9,10 @@ namespace RemediationTool.API.Models;
 public sealed class UploadRequest
 {
     /// <summary>CSV or XLSX report file.</summary>
+    [FromForm(Name = "file")]
     public IFormFile? File { get; set; }
 
     /// <summary>Source-system key selected from the configured source-system list.</summary>
+    [FromForm(Name = "sourceSystem")]
     public string? SourceSystem { get; set; }
 }
