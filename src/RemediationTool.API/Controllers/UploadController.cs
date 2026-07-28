@@ -10,7 +10,7 @@ namespace RemediationTool.API.Controllers;
 /// Upload API — receives an EDG report file, stores it, creates the ingestion
 /// job record, and returns the generated ReportUID for asynchronous processing.
 /// </summary>
-[Authorize(Policy = AuthorizationPolicies.AdminAccess)]
+[Authorize(Policy = AuthorizationPolicies.InternalApplication)]
 [ApiController]
 [Route("api/upload")]
 public class UploadController : ControllerBase

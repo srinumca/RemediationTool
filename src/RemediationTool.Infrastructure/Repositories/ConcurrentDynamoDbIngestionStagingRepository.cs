@@ -96,8 +96,8 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository :
                         var sequenceNumber = index + 1;
                         var item = new Dictionary<string, AttributeValue>(5)
                         {
-                            ["jobId"] = new AttributeValue { S = jobId },
-                            ["sequenceNumber"] = new AttributeValue
+                            ["JobId"] = new AttributeValue { S = jobId },
+                            ["SequenceNumber"] = new AttributeValue
                             {
                                 N = sequenceNumber.ToString(CultureInfo.InvariantCulture)
                             },
@@ -194,7 +194,7 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository :
                 new QueryRequest
                 {
                     TableName = _tableName,
-                    KeyConditionExpression = "jobId = :jobId AND sequenceNumber > :lastSeq",
+                    KeyConditionExpression = "JobId = :jobId AND SequenceNumber > :lastSeq",
                     ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                     {
                         [":jobId"] = new AttributeValue { S = jobId },
@@ -255,7 +255,7 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository :
                 new QueryRequest
                 {
                     TableName = _tableName,
-                    KeyConditionExpression = "jobId = :jobId",
+                    KeyConditionExpression = "JobId = :jobId",
                     ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                     {
                         [":jobId"] = new AttributeValue { S = jobId }
@@ -305,12 +305,12 @@ public sealed class ConcurrentDynamoDbIngestionStagingRepository :
                 new QueryRequest
                 {
                     TableName = _tableName,
-                    KeyConditionExpression = "jobId = :jobId",
+                    KeyConditionExpression = "JobId = :jobId",
                     ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                     {
                         [":jobId"] = new AttributeValue { S = jobId }
                     },
-                    ProjectionExpression = "jobId, sequenceNumber",
+                    ProjectionExpression = "JobId, SequenceNumber",
                     ExclusiveStartKey = lastKey
                 },
                 cancellationToken);

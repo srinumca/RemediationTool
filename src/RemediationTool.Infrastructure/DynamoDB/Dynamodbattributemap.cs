@@ -451,7 +451,7 @@ public static class DynamoDbAttributeMap
     {
         var item = new Dictionary<string, AttributeValue>();
 
-        AddS(item, "jobId", c.JobId);
+        AddS(item, "JobId", c.JobId);
         AddS(item, "inboundFileName", c.InboundFileName);
         AddS(item, "userName", c.UserName);
         AddS(item, "sourceSystem", c.SourceSystem);
@@ -483,7 +483,7 @@ public static class DynamoDbAttributeMap
 
         return new IngestionCheckpoint
         {
-            JobId = GetSOrEmpty(item, "jobId"),
+            JobId = GetSOrEmpty(item, "JobId"),
             InboundFileName = GetSOrEmpty(item, "inboundFileName"),
             UserName = GetSOrEmpty(item, "userName"),
             SourceSystem = GetS(item, "sourceSystem"),

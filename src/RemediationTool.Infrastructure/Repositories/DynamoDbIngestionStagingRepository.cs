@@ -83,8 +83,8 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
                         var findingIndex = startIndex + offset;
                         var item = new Dictionary<string, AttributeValue>(5)
                         {
-                            ["jobId"] = new AttributeValue { S = jobId },
-                            ["sequenceNumber"] = new AttributeValue
+                            ["JobId"] = new AttributeValue { S = jobId },
+                            ["SequenceNumber"] = new AttributeValue
                             {
                                 N = (findingIndex + 1).ToString(CultureInfo.InvariantCulture)
                             },
@@ -144,7 +144,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                KeyConditionExpression = "jobId = :jobId AND sequenceNumber > :lastSeq",
+                KeyConditionExpression = "JobId = :jobId AND SequenceNumber > :lastSeq",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId },
@@ -193,7 +193,7 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                KeyConditionExpression = "jobId = :jobId",
+                KeyConditionExpression = "JobId = :jobId",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId }
@@ -224,12 +224,12 @@ public class DynamoDbIngestionStagingRepository : IIngestionStagingRepository
             var response = _dynamoDb.QueryAsync(new QueryRequest
             {
                 TableName = _tableName,
-                KeyConditionExpression = "jobId = :jobId",
+                KeyConditionExpression = "JobId = :jobId",
                 ExpressionAttributeValues = new Dictionary<string, AttributeValue>
                 {
                     [":jobId"] = new AttributeValue { S = jobId }
                 },
-                ProjectionExpression = "jobId, sequenceNumber",
+                ProjectionExpression = "JobId, SequenceNumber",
                 ExclusiveStartKey = lastKey
             }).GetAwaiter().GetResult();
 

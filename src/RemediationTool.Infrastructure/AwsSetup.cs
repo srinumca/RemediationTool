@@ -60,7 +60,11 @@ public static class AwsSetup
                 : new SessionAWSCredentials(accessKey, secretKey, sessionToken);
         }
 
-        var region = awsOptions.Region ?? Amazon.RegionEndpoint.USEast2;
+        // Read region from config (AWS:Region), fallback to us-east-1
+        var configRegion = configuration["AWS:Region"];
+        var region = !string.IsNullOrWhiteSpace(configRegion)
+            ? Amazon.RegionEndpoint.GetBySystemName(configRegion)
+            : awsOptions.Region ?? Amazon.RegionEndpoint.USEast1;
 
         // --- IAmazonDynamoDB (lazy factory — app starts without credentials) ---
         services.AddSingleton<IAmazonDynamoDB>(_ =>
@@ -74,7 +78,13 @@ public static class AwsSetup
         // --- IAmazonS3 (lazy factory) ---
         services.AddSingleton<IAmazonS3>(_ =>
         {
-            var config = new Amazon.S3.AmazonS3Config { RegionEndpoint = region };
+            var config = new AmazonS3Config
+            {
+                RegionEndpoint = region,
+                ForcePathStyle = false,
+                UseAccelerateEndpoint = false,
+                UseHttp = false  // enforce HTTPS — never allow HTTP
+            };
             return explicitCreds is not null
                 ? new AmazonS3Client(explicitCreds, config)
                 : new AmazonS3Client(config);

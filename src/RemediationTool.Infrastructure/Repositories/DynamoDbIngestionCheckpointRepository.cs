@@ -39,7 +39,7 @@ public class DynamoDbIngestionCheckpointRepository : IIngestionCheckpointReposit
             TableName = _tableName,
             Key = new Dictionary<string, AttributeValue>
             {
-                ["jobId"] = new AttributeValue { S = jobId }  // camelCase
+                ["JobId"] = new AttributeValue { S = jobId }  // PascalCase to match us-east-1 table key
             }
         }).GetAwaiter().GetResult();
 
