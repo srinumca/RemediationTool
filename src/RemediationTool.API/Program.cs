@@ -172,10 +172,10 @@ try
 
         builder.Services.Configure<DynamoDbOptions>(
             builder.Configuration.GetSection(DynamoDbOptions.SectionName));
-
         builder.Services.AddSingleton<DynamoDbFileFindingRepository>();
         builder.Services.AddSingleton<IFileFindingRepository, ConcurrentDynamoDbFileFindingRepository>();
         builder.Services.AddSingleton<IIngestionJobAuditRepository, DynamoDbIngestionJobAuditRepository>();
+        builder.Services.AddSingleton<ISourceSystemRepository, DynamoDbSourceSystemRepository>();
         builder.Services.AddSingleton<DynamoDbRejectedRowRepository>();
         builder.Services.AddSingleton<IRejectedRowRepository, ConcurrentDynamoDbRejectedRowRepository>();
         builder.Services.AddSingleton<IIngestionCheckpointRepository, DynamoDbIngestionCheckpointRepository>();
@@ -187,6 +187,7 @@ try
     {
         builder.Services.AddSingleton<IFileFindingRepository, JsonFileFindingRepository>();
         builder.Services.AddSingleton<IIngestionJobAuditRepository, JsonIngestionJobAuditRepository>();
+        builder.Services.AddSingleton<ISourceSystemRepository, LocalSourceSystemRepository>();
         builder.Services.AddSingleton<IRejectedRowRepository, JsonRejectedRowRepository>();
         builder.Services.AddSingleton<IIngestionCheckpointRepository, JsonIngestionCheckpointRepository>();
         builder.Services.AddSingleton<IIngestionStagingRepository, JsonIngestionStagingRepository>();
