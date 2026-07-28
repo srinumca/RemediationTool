@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using RemediationTool.API.Controllers;
+using RemediationTool.API.Models;
 using RemediationTool.Application.Interfaces;
 using RemediationTool.Application.Models;
 using RemediationTool.Application.Options;
@@ -21,8 +22,10 @@ public sealed class UploadControllerValidationTests
         var fixture = new UploadControllerFixture();
 
         var result = await fixture.Controller.Upload(
-            null,
-            "NetApp",
+            new UploadRequest
+            {
+                SourceSystem = "NetApp"
+            },
             CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
@@ -45,14 +48,33 @@ public sealed class UploadControllerValidationTests
         var file = CreateFormFile("report.csv", "header\nvalue");
 
         var result = await fixture.Controller.Upload(
-            file,
-            sourceSystem,
+            new UploadRequest
+            {
+                File = file,
+                SourceSystem = sourceSystem
+            },
             CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         var response = Assert.IsType<UploadResponse>(badRequest.Value);
         Assert.False(response.IsSuccess);
         Assert.Equal("Source system is required.", response.Message);
+        fixture.Storage.VerifyNoOtherCalls();
+        fixture.JobAuditRepository.VerifyNoOtherCalls();
+        fixture.SourceSystemRepository.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Upload_MissingRequest_ReturnsBadRequestWithoutCallingDependencies()
+    {
+        var fixture = new UploadControllerFixture();
+
+        var result = await fixture.Controller.Upload(null, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var response = Assert.IsType<UploadResponse>(badRequest.Value);
+        Assert.False(response.IsSuccess);
+        Assert.Equal("A file is required.", response.Message);
         fixture.Storage.VerifyNoOtherCalls();
         fixture.JobAuditRepository.VerifyNoOtherCalls();
         fixture.SourceSystemRepository.VerifyNoOtherCalls();
